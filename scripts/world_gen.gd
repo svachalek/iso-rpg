@@ -124,18 +124,23 @@ func _terrain_with(x: int, z: int, probe: Vector2) -> Vector2:
 	if dist >= hw + RIVER_BANK_CELLS:
 		return Vector2(h, SEA_LEVEL)
 	var level := maxf(probe.y, float(SEA_LEVEL))
-	# A level above this column's own ground means the river runs along a
-	# hillside here, or the ground is a hollow beside it; leave the ground
-	# alone rather than flood it into a wide pool.
-	if level > _smooth_height(x, z) + 1.0:
-		return Vector2(h, SEA_LEVEL)
-	# The bank starts a little deeper than one cube under so that narrow
-	# bars between braided channels stay submerged.
+	# The channel is always carved. The bank starts under water so the shore
+	# is a gentle slope rather than a lip.
 	if dist < hw:
-		var bed := level - 1.3 - (1.0 - dist / hw) * 1.2
+		var bed := level - 0.8 - (1.0 - dist / hw) * 1.5
 		return Vector2(minf(h, bed), level)
-	var shoulder := level - 1.3 + (dist - hw) * 0.5
-	return Vector2(minf(h, shoulder), level)
+	# A river running along a hillside, with its level well above the ground
+	# beside it, leaves that ground alone.
+	if level > _smooth_height(x, z) + 1.5:
+		return Vector2(h, SEA_LEVEL)
+	# The bank: a shore sloping up from the channel, and beyond it a
+	# floodplain filled to just above the water so hollows beside the river
+	# do not read as lakes.
+	var shoulder := level - 0.8 + (dist - hw) * 0.5
+	var ground := minf(h, shoulder)
+	if shoulder >= level + 0.3:
+		ground = maxf(ground, level + 0.3)
+	return Vector2(ground, level)
 
 
 func surface_tile(h: int, water_level: int = SEA_LEVEL) -> int:

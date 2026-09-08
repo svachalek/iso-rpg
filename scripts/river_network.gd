@@ -12,7 +12,7 @@ const REGION := 256      # cells per traced region
 const MARGIN := 48       # extra cells traced around a region
 const STEP := 2          # cells between noise samples
 const BUCKET := 16       # cells per spatial bucket
-const HALF_WIDTH := 3.5  # channel half width in cells
+const HALF_WIDTH := 2.5  # channel half width in cells
 const LEVEL_RADIUS := 8.0  # disc radius for the level average, in cells
 
 var _noise: FastNoiseLite
@@ -117,16 +117,18 @@ func _add_segment(buckets: Dictionary, a: Vector2, b: Vector2) -> void:
 
 
 ## Water level at a centre-line point: the smoothed terrain averaged over a
-## disc around it, less one cube. Shared endpoints get identical values, so
-## the level is continuous along the river and constant across it.
+## disc around it, but never above the ground at the point itself, less one
+## cube. Shared endpoints get identical values, so the level is continuous
+## along the river and constant across it.
 func _level_at(p: Vector2) -> float:
 	var key := Vector2i(roundi(p.x * 100.0), roundi(p.y * 100.0))
 	if _levels.has(key):
 		return _levels[key]
-	var sum: float = _smooth_height.call(p.x, p.y)
+	var centre: float = _smooth_height.call(p.x, p.y)
+	var sum := centre
 	for k in 4:
 		var a := TAU * k / 4.0
 		sum += _smooth_height.call(p.x + cos(a) * LEVEL_RADIUS, p.y + sin(a) * LEVEL_RADIUS)
-	var level := sum / 5.0 - 1.0
+	var level := minf(sum / 5.0, centre) - 1.0
 	_levels[key] = level
 	return level
