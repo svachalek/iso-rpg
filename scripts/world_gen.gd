@@ -212,11 +212,10 @@ class ChunkBuild:
 ## The terrain surface is a heightfield on the grid vertices: each vertex is
 ## the mean of the continuous height of the four columns around it, snapped
 ## to quarter cubes. Every column reads its four corners from that shared
-## field, so neighbouring pieces always meet exactly. A column whose corners
-## span at most one cube becomes one patch piece in the cell above its
-## topmost cube; a column whose corners span more than a piece can carry
-## (steep ground) becomes a plain cube column reaching the highest corner,
-## which reads as a cliff.
+## field, so neighbouring pieces always meet exactly. Every column becomes
+## the patch piece that best fits its corners, in the cell above its topmost
+## cube; where the ground is steeper than any piece can carry, the piece
+## stops short and the uphill neighbour's cubes show as a cliff face.
 static func _vertex_heights(heights_f: PackedFloat32Array, w: int) -> PackedFloat32Array:
 	var vw := w + 1
 	var out := PackedFloat32Array()
@@ -370,19 +369,9 @@ func fill_chunk(gm: GridMap, cx: int, cz: int, size: int) -> ChunkBuild:
 	for iz in range(1, w - 1):
 		for ix in range(1, w - 1):
 			var i := iz * w + ix
-			var c := _corners(verts, w, ix, iz)
-			var lo: float = c.min()
-			var hi: float = c.max()
-			# A piece sits in the cell holding its lowest corner and may rise
-			# MAX_PIECE_RISE above that cell's floor.
-			var cell := floori(lo + 0.001)
-			if hi - cell <= TileLibrary.MAX_PIECE_RISE + 0.001:
-				var piece := TileLibrary.surface_piece(c)
-				pieces[i] = piece
-				scell[i] = piece.z
-			else:
-				pieces[i] = Vector3i(-1, 0, 0)
-				scell[i] = ceili(hi - 0.001)
+			var piece := TileLibrary.surface_piece(_corners(verts, w, ix, iz))
+			pieces[i] = piece
+			scell[i] = piece.z
 
 	var trees := PackedInt32Array()
 	trees.resize(w * w)

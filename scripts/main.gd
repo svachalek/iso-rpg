@@ -70,6 +70,13 @@ func _ready() -> void:
 	player.feet_height = finder.feet_height
 
 	var spawn := town.gate_cell
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--at="):
+			# Spawn at a column instead of the town gate; height comes from the terrain.
+			var parts := a.trim_prefix("--at=").split(",")
+			var x := int(parts[0])
+			var z := int(parts[1])
+			spawn = Vector3i(x, gen.height_at(x, z) + 1, z)
 	if "--shapes" in OS.get_cmdline_user_args():
 		_place_shape_samples()
 		spawn = Vector3i(town.origin.x + 18, town.height + 1, town.origin.y + 34)
@@ -442,15 +449,6 @@ func _run_selftest(shot: String) -> void:
 		await _key_test()
 	player.step_provider = Callable()  # keep stray keypresses out of the test
 	await get_tree().process_frame
-	for a in args:
-		if a.begins_with("--at="):
-			# Teleport for screenshots of distant places.
-			var parts := a.trim_prefix("--at=").split(",")
-			var target := Vector3i(int(parts[0]), 0, int(parts[1]))
-			chunks.update_center(Vector3(target.x, 0, target.z))
-			chunks.load_all_pending()
-			player.place(_nearest_standable(Vector3i(target.x, gen.height_at(target.x, target.z) + 1, target.z)))
-			rig.snap_to_target()
 	for a in args:
 		if a.begins_with("--walk="):
 			var parts := a.trim_prefix("--walk=").split(",")

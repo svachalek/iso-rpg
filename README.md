@@ -11,9 +11,10 @@ same scale; there is no zoom-in view.
   the mean of the continuous terrain height of the four columns around it,
   snapped to quarter cubes. Every column reads its four corners from that
   shared field, so neighbouring pieces always meet, and becomes one "patch"
-  piece (about a thousand shapes enumerated at startup from corner heights
+  piece (about 1500 shapes enumerated at startup from corner heights
   and built by one mesh builder) in the cell above its topmost cube. Ground
-  too steep for a piece becomes a plain cube column, a cliff. Roofs use the
+  too steep for any piece gets the closest one, its high corners clamped,
+  and the uphill neighbour's cubes show as a cliff face. Roofs use the
   same shapes. The character walks pieces with fractional stand heights,
   read from each loaded chunk's surface cells
 - Trees with cylindrical trunks and one canopy mesh each in four styles
@@ -94,10 +95,10 @@ Optional user args go after `--`:
     --noslice             start with the level slice off
     --blend=off           start with material blending off
     --nowalk              stand at spawn instead of walking
-    --walk=X,Z            walk to a column, then screenshot if asked
+    --walk=X,Z            walk to column X,Z, then screenshot if asked
     --zoom=N              with --walk: camera size for the screenshot
     --yaw=DEG             with --walk: camera yaw for the screenshot
-    --at=X,Z              teleport before walking (for distant places)
+    --at=X,Z              spawn at column X,Z (the first and last HUD cell coordinates) instead of the town gate
     --shapes              with --nowalk: lay out every shape and rotation by the gate
     --selftest            walk a short path, print stats, quit
     --screenshot=PATH     same as selftest, then save a PNG of the final frame

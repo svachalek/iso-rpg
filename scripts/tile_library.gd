@@ -27,7 +27,7 @@ enum Prop { WEEDS, FLOWERS_A, FLOWERS_B, STONES, PEBBLES }
 ## in between, and both terrain and roofs pick pieces with surface_piece().
 enum Shape { CUBE }  # every other shape number is a patch
 const PATCH_FIRST := 3  # patch shape numbers start here
-const MAX_PIECE_RISE := 1.75  # highest a piece's corner may sit above its cell floor, in cubes
+const MAX_CORNER := 8  # highest a piece's corner may sit above its cell floor, in quarter cubes
 const SHAPED_TILES: Array[int] = [Tile.GRASS, Tile.STONE, Tile.SAND, Tile.SNOW, Tile.GRAVEL, Tile.ROOF]
 ## Roofs step by half cubes, so they only need the shapes spanning one cube.
 const FLAT_STEP_TILES: Array[int] = [Tile.ROOF]
@@ -131,17 +131,19 @@ static func _less(a: PackedInt32Array, b: PackedInt32Array) -> bool:
 
 
 ## Every corner combination in quarter cubes with the lowest corner inside
-## the cell (0..3) and the others up to three quarters of a cube above the
-## cell top (max 7): a single piece can then carry any slope up to one and
-## three-quarter cubes across a cell. Flat combinations at the floor or the
-## top are cubes, not patches. Reduced to one canonical rotation each.
+## the cell (0..3) and the others up to a full cube above the cell top
+## (MAX_CORNER): a single piece can then carry any slope up to two cubes
+## across a cell wherever its lowest corner falls. Flat combinations at the
+## floor or the top are cubes, not patches. Reduced to one canonical rotation
+## each: about 1500 shapes, which keeps item ids below PROP_BASE.
 static func _ensure_patches() -> void:
 	if not _patches.is_empty():
 		return
-	for a in 8:
-		for b in 8:
-			for c in 8:
-				for d in 8:
+	var n := MAX_CORNER + 1
+	for a in n:
+		for b in n:
+			for c in n:
+				for d in n:
 					var lo := mini(mini(a, b), mini(c, d))
 					var hi := maxi(maxi(a, b), maxi(c, d))
 					if lo > 3:
@@ -175,26 +177,46 @@ static func patch_count() -> int:
 	return _patches.size()
 
 
-## The piece that caps a column whose surface has the given four corner
-## heights (world y, corner order as above): Vector3i(shape, rotation k,
-## cell y). Shape -1 means a flat cube top with nothing to add, or a span the
-## shapes cannot express. Cubes must fill every cell below the returned cell y.
+## The piece that best fits a column whose surface has the given four
+## corner heights (world y, corner order as above): Vector3i(shape,
+## rotation k, cell y). Corners are snapped to quarter cubes. The piece may
+## sit in any cell from the one holding the lowest corner up to the one
+## holding the highest; in each, corners outside the range the shapes can
+## express are clamped to it, and the cell whose piece deviates least from
+## the true corners wins (the lower cell on a tie). Ground steeper than any
+## shape thus still gets the closest piece, and the excess shows as the
+## uphill neighbours' cube faces. Shape -1 means a flat cube top with
+## nothing to add. Cubes must fill every cell below the returned cell y.
 static func surface_piece(v: Array[float]) -> Vector3i:
 	_ensure_patches()
-	var m := minf(minf(v[0], v[1]), minf(v[2], v[3]))
-	# Quantise the lowest corner first so the cell is chosen consistently
-	# with the rounded corners (a value like 14.9 rounds up to the next cell).
-	var cell_y := floori(roundf(m * 4.0) / 4.0 + 0.001)
-	var q := PackedInt32Array([0, 0, 0, 0])
-	var flat := true
+	var q := PackedInt32Array([0, 0, 0, 0])  # corners in world quarter cubes
 	for i in 4:
-		q[i] = clampi(roundi((v[i] - cell_y) * 4.0), 0, 7)
-		if q[i] != q[0]:
-			flat = false
-	if flat and (q[0] == 0 or q[0] == 4):
-		return Vector3i(-1, 0, cell_y)
-	var found: Vector2i = _patch_index[q]
-	return Vector3i(found.x, found.y, cell_y)
+		q[i] = roundi(v[i] * 4.0)
+	var lo := mini(mini(q[0], q[1]), mini(q[2], q[3]))
+	var hi := maxi(maxi(q[0], q[1]), maxi(q[2], q[3]))
+	var lo_cell := floori(lo / 4.0)
+	if lo == hi and lo == lo_cell * 4:
+		return Vector3i(-1, 0, lo_cell)
+	# The last cell whose floor lies below the highest corner.
+	var hi_cell := maxi(lo_cell, floori((hi - 1) / 4.0))
+	var best := PackedInt32Array()
+	var best_cell := lo_cell
+	var best_err := -1
+	for cell in range(lo_cell, hi_cell + 1):
+		var rel := PackedInt32Array([0, 0, 0, 0])
+		var err := 0
+		for i in 4:
+			var r := q[i] - cell * 4
+			rel[i] = clampi(r, 0, MAX_CORNER)
+			err += absi(rel[i] - r)
+		if best_err < 0 or err < best_err:
+			best = rel
+			best_cell = cell
+			best_err = err
+	# The lowest corner lies within the lowest cell and at or below the floor
+	# of any higher one, so every candidate is a patch in the index.
+	var found: Vector2i = _patch_index[best]
+	return Vector3i(found.x, found.y, best_cell)
 
 
 ## GridMap orientation index for k quarter turns about Y. A piece with
