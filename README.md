@@ -43,20 +43,23 @@ same scale; there is no zoom-in view.
 - Single procedurally painted texture atlas, nearest filtering, one material
 - Click-to-move with A* over stand cells; one-cube steps are walkable, water and trees are not
 - Orthographic camera at the isometric pitch, rotates in 90 degree steps
-- Rivers (scripts/river_network.gd): the zero lines of a noise field are
-  traced once per 256-cell region with marching squares into segments held
-  in spatial buckets; each segment endpoint carries a water level from the
-  smoothed terrain around it, so the level is constant across a river and
-  continuous along it. Columns ask the network for their distance and level,
-  carve a channel one to two cubes deep, and raise banks half a cube per
-  cell; rivers stop at mountainsides and never flood ground more than a cube
-  below their level. Water cells, the water sheet and the material map all
-  use the local level, and the character may wade only ankle deep
+- Rivers (scripts/river_network.gd): sources are placed by hash on high
+  ground and each is traced downhill over the smoothed terrain until it
+  reaches the sea, with a water level that only ever falls, so every river
+  flows to the sea. Each river is traced once and cached; regions bucket the
+  segments of every river that can reach them, and columns ask for their
+  distance and level. The channel is carved one to two cubes below the
+  level with a submerged shore, banks rise half a cube per cell, and the
+  floodplain beside a river is filled to just above the water. Water cells,
+  the water sheet and the material map all use the local level, and the
+  character may wade only ankle deep
 - Roads (scripts/road_builder.gd): from every town gate a coarse A* over the
   height field, preferring gentle slopes and avoiding water, rasterised two
   cells wide as a gravel surface override that keeps the terrain's ramps.
-  At water the road stops on the bank and a plank deck crosses in a straight
-  line along a grid axis to the far bank, then the road resumes
+  At water the road stops on the bank, a plank deck crosses in a straight
+  line along whichever grid axis gives the shorter span (decking over bars
+  narrower than four cells), the road runs on along that axis until the
+  line ahead is clear of water, then resumes toward its goal
 - Hand-edit layer over the generator (scripts/world_edits.gd): column height
   overrides, per-column surface material overrides, and per-cell tile
   overrides, applied when a chunk is built

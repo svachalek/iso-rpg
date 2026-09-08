@@ -25,7 +25,6 @@ var _hills := FastNoiseLite.new()
 var _mountains := FastNoiseLite.new()
 var _detail := FastNoiseLite.new()
 var _forest := FastNoiseLite.new()
-var _river := FastNoiseLite.new()
 
 const RIVER_BANK_CELLS := 18.0   # how far beyond the channel the bank rule can reach
 
@@ -58,12 +57,7 @@ func _init(seed_value: int = 1337) -> void:
 	_forest.frequency = 0.02
 	_forest.fractal_octaves = 2
 
-	_river.seed = seed_value + 4
-	_river.noise_type = FastNoiseLite.TYPE_SIMPLEX_SMOOTH
-	_river.frequency = 0.0045
-	_river.fractal_octaves = 2
-	rivers = RiverNetwork.new(_river, _smooth_height,
-		func(x: float, z: float) -> bool: return _mountains.get_noise_2d(x, z) > 0.5)
+	rivers = RiverNetwork.new(_smooth_height, _hash01, float(SEA_LEVEL))
 
 
 ## Continuous terrain height before quantising to cubes. Edited columns
