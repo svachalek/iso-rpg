@@ -27,10 +27,9 @@ var _detail := FastNoiseLite.new()
 var _forest := FastNoiseLite.new()
 var _river := FastNoiseLite.new()
 
-const RIVER_HALF_WIDTH := 0.04   # in noise units; channel where |river noise| is below this
-const RIVER_MAX_HALF_CELLS := 4.0  # widest half width in cells, where the noise runs flat
-const RIVER_LEVEL_STEP := 6.0      # cells along the river between level samples
 const RIVER_BANK_CELLS := 18.0   # how far beyond the channel the bank rule can reach
+
+var rivers: RiverNetwork
 
 
 func _init(seed_value: int = 1337) -> void:
@@ -63,6 +62,8 @@ func _init(seed_value: int = 1337) -> void:
 	_river.noise_type = FastNoiseLite.TYPE_SIMPLEX_SMOOTH
 	_river.frequency = 0.0045
 	_river.fractal_octaves = 2
+	rivers = RiverNetwork.new(_river, _smooth_height,
+		func(x: float, z: float) -> bool: return _mountains.get_noise_2d(x, z) > 0.5)
 
 
 ## Continuous terrain height before quantising to cubes. Edited columns
@@ -97,21 +98,11 @@ func water_surface_at(x: int, z: int) -> float:
 
 ## True within a few cells of a river channel; no trees or props there.
 func near_river(x: int, z: int) -> bool:
-	var p := _river_probe(x, z)
-	return p[0] < p[1] + 4.0
+	return rivers.probe(x, z).x < RiverNetwork.HALF_WIDTH + 4.0
 
 
-## River field at a column: [distance to the centre line in cells, half
-## width in cells, noise value, grad x, grad z]. The half width is capped at
-## RIVER_MAX_HALF_CELLS where the noise is flat, otherwise a zero crossing
-## with a small gradient would flood an enormous area.
-func _river_probe(x: int, z: int) -> PackedFloat32Array:
-	var n := _river.get_noise_2d(x, z)
-	var gx := _river.get_noise_2d(x + 1, z) - n
-	var gz := _river.get_noise_2d(x, z + 1) - n
-	var g := maxf(sqrt(gx * gx + gz * gz), 1e-5)
-	var hw_cells := minf(RIVER_HALF_WIDTH / g, RIVER_MAX_HALF_CELLS)
-	return PackedFloat32Array([absf(n) / g, hw_cells, n, gx, gz])
+func _terrain(x: int, z: int) -> Vector2:
+	return _terrain_with(x, z, rivers.probe(x, z))
 
 
 func _smooth_height(x: float, z: float) -> float:
@@ -122,42 +113,21 @@ func _smooth_height(x: float, z: float) -> float:
 	return smooth
 
 
-## (continuous height, continuous water level) for a column. Rivers carve
-## the base terrain: a channel one to two cubes below the water level, then
-## banks rising half a cube per cell (the terrain's own ramp limit) until
-## they meet natural ground. The level is the smoothed terrain height at the
-## channel's centre line, averaged along the river, so it is constant across
-## the river's width and falls smoothly along its length.
-func _terrain(x: int, z: int) -> Vector2:
+## (continuous height, continuous water level) for a column given its river
+## probe. Rivers carve the base terrain: a channel one to two cubes below
+## the river's water level, then banks rising half a cube per cell (the
+## terrain's own ramp limit) until they meet natural ground.
+func _terrain_with(x: int, z: int, probe: Vector2) -> Vector2:
 	var h := _smooth_height(x, z) + _detail.get_noise_2d(x, z) * 0.8
-	var probe := _river_probe(x, z)
-	var dist := probe[0]
-	var hw := probe[1]
-	# No rivers on mountainsides: the ground falls faster than a level can follow.
-	if dist >= hw + RIVER_BANK_CELLS or _mountains.get_noise_2d(x, z) > 0.5:
+	var dist := probe.x
+	var hw := RiverNetwork.HALF_WIDTH
+	if dist >= hw + RIVER_BANK_CELLS:
 		return Vector2(h, SEA_LEVEL)
-	# Two Newton steps toward the zero line of the river noise give a
-	# centre-line point that neighbouring columns agree on closely.
-	var cx := float(x)
-	var cz := float(z)
-	var nv := probe[2]
-	var gxn := probe[3]
-	var gzn := probe[4]
-	for i in 2:
-		var g2 := maxf(gxn * gxn + gzn * gzn, 1e-10)
-		cx -= nv * gxn / g2
-		cz -= nv * gzn / g2
-		nv = _river.get_noise_2d(cx, cz)
-		gxn = _river.get_noise_2d(cx + 1.0, cz) - nv
-		gzn = _river.get_noise_2d(cx, cz + 1.0) - nv
-	var g := sqrt(maxf(gxn * gxn + gzn * gzn, 1e-10))
-	var tx := -gzn / g * RIVER_LEVEL_STEP
-	var tz := gxn / g * RIVER_LEVEL_STEP
-	var along := (_smooth_height(cx - tx, cz - tz) + _smooth_height(cx, cz) + _smooth_height(cx + tx, cz + tz)) / 3.0
-	var level := maxf(along - 1.0, float(SEA_LEVEL))
-	# A level well above this column's own ground means the centre line
-	# sits on a mountainside or the estimate went astray: no river here.
-	if level > _smooth_height(x, z) + 2.0 or _mountains.get_noise_2d(cx, cz) > 0.5:
+	var level := maxf(probe.y, float(SEA_LEVEL))
+	# A level above this column's own ground means the river runs along a
+	# hillside here, or the ground is a hollow beside it; leave the ground
+	# alone rather than flood it into a wide pool.
+	if level > _smooth_height(x, z) + 1.0:
 		return Vector2(h, SEA_LEVEL)
 	# The bank starts a little deeper than one cube under so that narrow
 	# bars between braided channels stay submerged.
@@ -307,19 +277,22 @@ func _canopy_for(x: int, z: int) -> int:
 
 
 ## Ground the generator may decorate: not hand-shaped, not a road, not a
-## river bank, and between the shore and the stone line.
-func is_natural_ground(x: int, z: int, h: int) -> bool:
+## river bank, and between the shore and the stone line. `river_dist` may be
+## passed when the caller already probed the river network.
+func is_natural_ground(x: int, z: int, h: int, river_dist: float = -1.0) -> bool:
 	if h <= SEA_LEVEL + 1 or h >= STONE_LINE:
 		return false
 	var col := Vector2i(x, z)
 	if edits.heights.has(col) or edits.surfaces.has(col):
 		return false
-	return not near_river(x, z)
+	if river_dist < 0.0:
+		return not near_river(x, z)
+	return river_dist >= RiverNetwork.HALF_WIDTH + 4.0
 
 
 ## Trunk height of the tree rooted in this column, or 0 for none.
-func tree_at(x: int, z: int, h: int) -> int:
-	if not is_natural_ground(x, z, h):
+func tree_at(x: int, z: int, h: int, river_dist: float = -1.0) -> int:
+	if not is_natural_ground(x, z, h, river_dist):
 		return 0
 	var own := _tree_score(x, z)
 	if own < 0.0:
@@ -373,13 +346,17 @@ func fill_chunk(gm: GridMap, cx: int, cz: int, size: int) -> ChunkBuild:
 	surfaces.resize(w * w)
 	var levels := PackedInt32Array()
 	levels.resize(w * w)
+	var river_dist := PackedFloat32Array()
+	river_dist.resize(w * w)
 	for lz in w:
 		for lx in w:
 			var i := lz * w + lx
 			var wx := ox + lx
 			var wz := oz + lz
+			var probe := rivers.probe(wx, wz)
+			river_dist[i] = probe.x
 			var edited: Variant = edits.heights.get(Vector2i(wx, wz)) if not edits.heights.is_empty() else null
-			var t := Vector2(float(edited), float(SEA_LEVEL)) if edited != null else _terrain(wx, wz)
+			var t := Vector2(float(edited), float(SEA_LEVEL)) if edited != null else _terrain_with(wx, wz, probe)
 			heights_f[i] = t.x
 			heights[i] = int(floor(t.x))
 			surfaces[i] = t.y
@@ -414,7 +391,7 @@ func fill_chunk(gm: GridMap, cx: int, cz: int, size: int) -> ChunkBuild:
 		for lx in range(1, w - 1):
 			var i := lz * w + lx
 			if pieces[i].x >= 0 or scell[i] == heights[i] + 1:
-				trees[i] = tree_at(ox + lx, oz + lz, heights[i])
+				trees[i] = tree_at(ox + lx, oz + lz, heights[i], river_dist[i])
 
 	_paint_material_map(heights, heights_f, levels, w, ox, oz, size)
 	var water_st := SurfaceTool.new()

@@ -12,19 +12,17 @@ var hud: Label
 
 var _click_pending := false
 var _click_pos := Vector2.ZERO
-enum Mode { OFF, COVERED, ALWAYS }
-const MODE_NAMES := ["off", "when covered", "always"]
 const SLICE_HEADROOM := 3  # cubes above the feet that stay visible
-const CUTOUT_RADIUS_NEAR := 2.0   # always mode: just what overlaps the character
-const CUTOUT_RADIUS_INDOORS := 6.0  # covered mode: clears the walls facing the camera
+const CUTOUT_RADIUS := 6.0  # screen-plane radius that clears the walls facing the camera
 
+## Both occlusion aids act only while something is overhead (indoors, under
+## a canopy); the keys just switch them off for comparison.
 var _status := "WASD/arrows or click: walk   Q/E: rotate   Wheel: zoom   C: cutout   V: slice   B: blend   Esc: quit"
 var _blend_on := true
 var town: TownBuilder
-var _cutout_mode := Mode.COVERED
+var _cutout_on := true
 var _cutout_strength := 0.0
-var _cutout_radius := CUTOUT_RADIUS_INDOORS
-var _slice_mode := Mode.COVERED
+var _slice_on := true
 var _slice_strength := 0.0
 var _covered := false
 
@@ -34,10 +32,10 @@ func _ready() -> void:
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--seed="):
 			seed_value = int(a.trim_prefix("--seed="))
-		elif a.begins_with("--cutout="):
-			_cutout_mode = maxi(MODE_NAMES.find(a.trim_prefix("--cutout=")), 0) as Mode
-		elif a.begins_with("--slice="):
-			_slice_mode = maxi(MODE_NAMES.find(a.trim_prefix("--slice=")), 0) as Mode
+		elif a == "--nocutout":
+			_cutout_on = false
+		elif a == "--noslice":
+			_slice_on = false
 		elif a == "--blend=off":
 			_blend_on = false
 
@@ -75,7 +73,6 @@ func _ready() -> void:
 	if "--shapes" in OS.get_cmdline_user_args():
 		_place_shape_samples()
 		spawn = Vector3i(town.origin.x + 18, town.height + 1, town.origin.y + 34)
-		_slice_mode = Mode.ALWAYS
 	chunks.update_center(Vector3(spawn.x, 0, spawn.z))
 	chunks.load_all_pending()
 	spawn = _nearest_standable(spawn)
@@ -170,7 +167,7 @@ func _process(delta: float) -> void:
 	hud.text = "%s\nFPS %d   cell %s   chunks %d loaded, %d pending   cutout %s   slice %s   blend %s" % [
 		_status, Engine.get_frames_per_second(), player.cell,
 		chunks.loaded_count(), chunks.pending_count(),
-		MODE_NAMES[_cutout_mode], MODE_NAMES[_slice_mode], "on" if _blend_on else "off"]
+		"on" if _cutout_on else "off", "on" if _slice_on else "off", "on" if _blend_on else "off"]
 
 
 ## Something solid within a few cubes above the character's head, checking the
@@ -191,25 +188,16 @@ func _set_blend(on: bool) -> void:
 	RenderingServer.global_shader_parameter_set("blend_enabled", 1.0 if on else 0.0)
 
 
-func _want(mode: Mode) -> float:
-	match mode:
-		Mode.ALWAYS:
-			return 1.0
-		Mode.COVERED:
-			return 1.0 if _covered else 0.0
-	return 0.0
-
-
 func _update_occlusion(delta: float) -> void:
-	_slice_strength = move_toward(_slice_strength, _want(_slice_mode), delta * 4.0)
+	var want_slice := 1.0 if _slice_on and _covered else 0.0
+	_slice_strength = move_toward(_slice_strength, want_slice, delta * 4.0)
 	RenderingServer.global_shader_parameter_set("slice_strength", _slice_strength)
 	RenderingServer.global_shader_parameter_set("slice_height", float(player.cell.y + SLICE_HEADROOM))
 
-	_cutout_strength = move_toward(_cutout_strength, _want(_cutout_mode), delta * 4.0)
-	var radius := CUTOUT_RADIUS_INDOORS if _cutout_mode == Mode.COVERED else CUTOUT_RADIUS_NEAR
-	_cutout_radius = move_toward(_cutout_radius, radius, delta * 12.0)
+	var want_cutout := 1.0 if _cutout_on and _covered else 0.0
+	_cutout_strength = move_toward(_cutout_strength, want_cutout, delta * 4.0)
 	RenderingServer.global_shader_parameter_set("cutout_enabled", _cutout_strength)
-	RenderingServer.global_shader_parameter_set("cutout_radius", _cutout_radius)
+	RenderingServer.global_shader_parameter_set("cutout_radius", CUTOUT_RADIUS)
 	RenderingServer.global_shader_parameter_set("cutout_floor", float(player.cell.y + 1))
 
 
@@ -258,7 +246,7 @@ func _is_hidden_point(p: Vector3) -> bool:
 		var sp := Vector2(rel.dot(basis.x), rel.dot(basis.y))
 		var body_top := 1.8 * basis.y.y
 		var d := (sp - Vector2(0, clampf(sp.y, 0, body_top))).length()
-		if in_front > 0.7 and d < _cutout_radius - 0.4:
+		if in_front > 0.7 and d < CUTOUT_RADIUS - 0.4:
 			return true
 	return false
 
@@ -289,9 +277,9 @@ func _unhandled_input(event: InputEvent) -> void:
 			KEY_E:
 				rig.rotate_step(1)
 			KEY_C:
-				_cutout_mode = ((_cutout_mode + 1) % MODE_NAMES.size()) as Mode
+				_cutout_on = not _cutout_on
 			KEY_V:
-				_slice_mode = ((_slice_mode + 1) % MODE_NAMES.size()) as Mode
+				_slice_on = not _slice_on
 			KEY_B:
 				_set_blend(not _blend_on)
 			KEY_ESCAPE:

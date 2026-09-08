@@ -7,6 +7,8 @@ extends RefCounted
 
 const STEP := 3          # coarse grid spacing in cells
 const WIDTH := 2
+const MAX_BRIDGE := 24   # longest straight crossing a road will attempt
+const MAX_CROSSINGS := 4  # bridges one segment may lay before giving up
 
 
 ## Builds a road from `from` to `to` (world columns). Returns the number of
@@ -55,8 +57,11 @@ static func build(gen: WorldGen, from: Vector2i, to: Vector2i) -> int:
 	return laid
 
 
-## Rasterises a straight segment, WIDTH cells wide.
-static func _lay_segment(gen: WorldGen, a: Vector2i, b: Vector2i) -> int:
+## Rasterises a straight segment, WIDTH cells wide. Where the segment meets
+## water the road stops at the bank, a bridge crosses in a straight line
+## along the axis the crossing mostly follows, and the road resumes from the
+## landing toward the segment's end.
+static func _lay_segment(gen: WorldGen, a: Vector2i, b: Vector2i, crossings: int = 0) -> int:
 	var laid := 0
 	var d := b - a
 	var steps := maxi(absi(d.x), absi(d.y))
@@ -64,19 +69,42 @@ static func _lay_segment(gen: WorldGen, a: Vector2i, b: Vector2i) -> int:
 	for i in range(0, steps + 1):
 		var t := float(i) / maxf(steps, 1)
 		var c := Vector2i(roundi(lerpf(a.x, b.x, t)), roundi(lerpf(a.y, b.y, t)))
+		if _is_water(gen, c):
+			if crossings >= MAX_CROSSINGS:
+				return laid  # a road that keeps meeting water gives up
+			var landing := _lay_bridge(gen, c, Vector2i(signi(d.x), 0) if absi(d.x) >= absi(d.y) else Vector2i(0, signi(d.y)))
+			if landing == c:
+				return laid  # no far bank within reach; the road ends here
+			return laid + _lay_segment(gen, landing, b, crossings + 1)
 		for k in WIDTH:
-			laid += _lay_cell(gen, c + side * k)
+			laid += _lay_road_cell(gen, c + side * k)
 	return laid
 
 
-static func _lay_cell(gen: WorldGen, c: Vector2i) -> int:
+static func _is_water(gen: WorldGen, c: Vector2i) -> bool:
+	return gen.height_at(c.x, c.y) < gen.water_level_at(c.x, c.y)
+
+
+## A plank deck from the first water cell straight along `dir` to the far
+## bank, WIDTH cells wide. Returns the first land cell reached, or `start`
+## when the water does not end within MAX_BRIDGE cells.
+static func _lay_bridge(gen: WorldGen, start: Vector2i, dir: Vector2i) -> Vector2i:
+	var side := Vector2i(dir.y, dir.x).abs()
+	var c := start
+	for i in MAX_BRIDGE:
+		if not _is_water(gen, c):
+			return c
+		var level := gen.water_level_at(c.x, c.y)
+		for k in WIDTH:
+			var cell := c + side * k
+			gen.edits.set_cell(Vector3i(cell.x, level + 1, cell.y), TileLibrary.Tile.PLANKS)
+		c += dir
+	return start
+
+
+static func _lay_road_cell(gen: WorldGen, c: Vector2i) -> int:
 	var e := gen.edits
 	if e.heights.has(c) and e.surfaces.has(c):
 		return 0  # town streets already here
-	var h := gen.height_at(c.x, c.y)
-	var level := gen.water_level_at(c.x, c.y)
-	if h < level:
-		e.set_cell(Vector3i(c.x, level + 1, c.y), TileLibrary.Tile.PLANKS)
-	else:
-		e.set_surface(c.x, c.y, TileLibrary.Tile.GRAVEL)
+	e.set_surface(c.x, c.y, TileLibrary.Tile.GRAVEL)
 	return 1

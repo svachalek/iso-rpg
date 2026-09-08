@@ -43,19 +43,20 @@ same scale; there is no zoom-in view.
 - Single procedurally painted texture atlas, nearest filtering, one material
 - Click-to-move with A* over stand cells; one-cube steps are walkable, water and trees are not
 - Orthographic camera at the isometric pitch, rotates in 90 degree steps
-- Rivers: a noise field carves channels one to two cubes deep below a local
-  water level taken from the smoothed terrain at the channel's centre line
-  (two Newton steps along the noise gradient, averaged along the river), so
-  the level is constant across the river and falls continuously along it:
-  the water sheet slopes as rapids rather than stepping. Banks rise
-  half a cube per cell until they meet natural ground; channel width is
-  capped where the noise runs flat; no rivers on mountainsides. Water cells,
-  the water sheet and the material map all use the local level, and the
-  character may wade only ankle deep
+- Rivers (scripts/river_network.gd): the zero lines of a noise field are
+  traced once per 256-cell region with marching squares into segments held
+  in spatial buckets; each segment endpoint carries a water level from the
+  smoothed terrain around it, so the level is constant across a river and
+  continuous along it. Columns ask the network for their distance and level,
+  carve a channel one to two cubes deep, and raise banks half a cube per
+  cell; rivers stop at mountainsides and never flood ground more than a cube
+  below their level. Water cells, the water sheet and the material map all
+  use the local level, and the character may wade only ankle deep
 - Roads (scripts/road_builder.gd): from every town gate a coarse A* over the
   height field, preferring gentle slopes and avoiding water, rasterised two
-  cells wide as a gravel surface override that keeps the terrain's ramps;
-  water crossings get a plank deck one cube above the water
+  cells wide as a gravel surface override that keeps the terrain's ramps.
+  At water the road stops on the bank and a plank deck crosses in a straight
+  line along a grid axis to the far bank, then the road resumes
 - Hand-edit layer over the generator (scripts/world_edits.gd): column height
   overrides, per-column surface material overrides, and per-cell tile
   overrides, applied when a chunk is built
@@ -63,9 +64,9 @@ same scale; there is no zoom-in view.
   origin: gravel streets, five timber houses with stone footings, doors,
   windows and hip roofs; the character spawns at the south gate
 - Occlusion handling, all in shaders/tiles.gdshader and shaders/xray.gdshader:
-  - cutout: tiles between the camera and the character are dithered away.
-    Default is "when covered", which uses a wide radius so the walls facing
-    the camera open up indoors; "always" uses a tight radius everywhere
+  - cutout: while something is overhead, tiles between the camera and the
+    character within a wide radius are dithered away, so the walls facing
+    the camera open up indoors
   - level slice: when something solid is overhead, every cube more than three
     above the character's feet is hidden within a nine cube radius, so tree
     canopies and (later) roofs lift away
@@ -86,8 +87,8 @@ Or run it directly:
 Optional user args go after `--`:
 
     --seed=N              world seed (default 1337)
-    --cutout=MODE         off, covered (default) or always
-    --slice=MODE          off, covered (default) or always
+    --nocutout            start with the cutout off
+    --noslice             start with the level slice off
     --blend=off           start with material blending off
     --nowalk              stand at spawn instead of walking
     --walk=X,Z            walk to a column, then screenshot if asked
@@ -112,8 +113,8 @@ with `class_name` so the class cache exists):
 | Left click | walk to the clicked column; clicks pass through sliced roofs and cutouts |
 | Q / E | rotate camera 90 degrees |
 | Mouse wheel | zoom |
-| C | cycle the cutout: off, when covered, always |
-| V | cycle the level slice: off, when covered, always |
+| C | toggle the cutout (active only when something is overhead) |
+| V | toggle the level slice (active only when something is overhead) |
 | B | toggle material blending between grass, sand, stone and snow |
 | Esc | quit |
 
