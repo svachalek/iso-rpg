@@ -16,18 +16,21 @@ const CANOPY_SHADOW_OFFSET := 4  # twin id = canopy id + this
 const PROP_BASE := 60000  # above any shape * 100 + tile, below GridMap's 16-bit item limit
 enum Prop { WEEDS, FLOWERS_A, FLOWERS_B, STONES, PEBBLES }
 
-## Shapes other than the cube exist for a subset of tiles. An item id is
-## shape * 100 + tile, so both are recoverable from any id.
+## Shapes other than the cube exist for a subset of tiles. An item id packs
+## shape and tile (see item_id), so both are recoverable from any id.
 ##
-## Beyond the slab and the 45 degree wedge, every partial shape is a "patch":
+## Every partial shape is a "patch":
 ## a column top described by the heights of its four corners in quarter
 ## cubes above the cell floor. All combinations that fit in one cell are
 ## enumerated at startup, normalised under rotation, and built from one
 ## generic mesh builder. This gives ramps, corners, saddles and everything
 ## in between, and both terrain and roofs pick pieces with surface_piece().
-enum Shape { CUBE, SLAB, WEDGE }
+enum Shape { CUBE }  # every other shape number is a patch
 const PATCH_FIRST := 3  # patch shape numbers start here
-const SHAPED_TILES: Array[int] = [Tile.GRASS, Tile.DIRT, Tile.STONE, Tile.SAND, Tile.SNOW, Tile.GRAVEL, Tile.ROOF]
+const MAX_PIECE_RISE := 1.75  # highest a piece's corner may sit above its cell floor, in cubes
+const SHAPED_TILES: Array[int] = [Tile.GRASS, Tile.STONE, Tile.SAND, Tile.SNOW, Tile.GRAVEL, Tile.ROOF]
+## Roofs step by half cubes, so they only need the shapes spanning one cube.
+const FLAT_STEP_TILES: Array[int] = [Tile.ROOF]
 ## Natural ground whose top faces blend into each other via the material map.
 const TERRAIN_TILES: Array[int] = [Tile.GRASS, Tile.DIRT, Tile.STONE, Tile.SAND, Tile.SNOW]
 
@@ -63,29 +66,30 @@ const FACES := {
 }
 
 
+## Item ids pack shape and tile: shape * ID_STRIDE + tile. GridMap stores
+## ids in 16 bits, so with ~1000 shapes the stride must stay small.
+const ID_STRIDE := 32
+
+
 static func item_id(shape: int, tile: int) -> int:
-	return shape * 100 + tile
+	return shape * ID_STRIDE + tile
 
 
 static func slab_id(tile: int) -> int:
 	return item_id(patch_shape([2, 2, 2, 2]), tile)
 
 
-static func wedge_id(tile: int) -> int:
-	return item_id(Shape.WEDGE, tile)
-
-
 static func shape_of(id: int) -> int:
-	return id / 100
+	return id / ID_STRIDE
 
 
 static func tile_of(id: int) -> int:
-	return id % 100
+	return id % ID_STRIDE
 
 
 ## True for any shape a character stands inside rather than on top of.
 static func is_partial(id: int) -> bool:
-	return id >= 100 and id < PROP_BASE
+	return id >= ID_STRIDE and id < PROP_BASE
 
 
 static func prop_id(prop: int) -> int:
@@ -102,8 +106,6 @@ static func stand_offset(id: int) -> float:
 	if is_prop(id):
 		return 0.0
 	var shape := shape_of(id)
-	if shape == Shape.WEDGE:
-		return 0.5
 	if shape < PATCH_FIRST:
 		return 0.0
 	if shape - PATCH_FIRST >= _patches.size():
@@ -128,11 +130,11 @@ static func _less(a: PackedInt32Array, b: PackedInt32Array) -> bool:
 	return false
 
 
-## Every corner combination in quarter cubes that spans at most one cube,
-## with its lowest corner inside the cell (0..3) and the others up to a cube
-## above the cell top (max 7), so a surface crossing the cell boundary can be
-## one piece rather than two clamped ones. Flat combinations at the floor or
-## the top are cubes, not patches. Reduced to one canonical rotation each.
+## Every corner combination in quarter cubes with the lowest corner inside
+## the cell (0..3) and the others up to three quarters of a cube above the
+## cell top (max 7): a single piece can then carry any slope up to one and
+## three-quarter cubes across a cell. Flat combinations at the floor or the
+## top are cubes, not patches. Reduced to one canonical rotation each.
 static func _ensure_patches() -> void:
 	if not _patches.is_empty():
 		return
@@ -142,7 +144,7 @@ static func _ensure_patches() -> void:
 				for d in 8:
 					var lo := mini(mini(a, b), mini(c, d))
 					var hi := maxi(maxi(a, b), maxi(c, d))
-					if lo > 3 or hi - lo > 4:
+					if lo > 3:
 						continue
 					var q := PackedInt32Array([a, b, c, d])
 					if _patch_index.has(q):
@@ -191,14 +193,11 @@ static func surface_piece(v: Array[float]) -> Vector3i:
 			flat = false
 	if flat and (q[0] == 0 or q[0] == 4):
 		return Vector3i(-1, 0, cell_y)
-	var lo := mini(mini(q[0], q[1]), mini(q[2], q[3]))
-	for i in 4:
-		q[i] = mini(q[i], lo + 4)  # never asked for when corners are within a cube
 	var found: Vector2i = _patch_index[q]
 	return Vector3i(found.x, found.y, cell_y)
 
 
-## GridMap orientation index for k quarter turns about Y. A wedge with
+## GridMap orientation index for k quarter turns about Y. A piece with
 ## rotation 0 rises toward +z; 1 toward +x; 2 toward -z; 3 toward -x.
 static func rotation_index(k: int) -> int:
 	if _rotation_index.is_empty():
@@ -243,7 +242,9 @@ static func build() -> MeshLibrary:
 	tree_mat.set_shader_parameter("cutout_exempt", 1.0)
 	var canopy_mat := _make_material(atlas, "CANOPY")
 	canopy_mat.set_shader_parameter("cutout_exempt", 1.0)
-	lib.set_item_mesh(Tile.TRUNK, _build_cylinder(0.32, Slot.TRUNK_SIDE, Slot.TRUNK_TOP, 10, tree_mat))
+	# The trunk mesh reaches one cell below its own so it emerges from the
+	# slope piece or cube top beneath the first trunk cell.
+	lib.set_item_mesh(Tile.TRUNK, _build_cylinder(0.32, Slot.TRUNK_SIDE, Slot.TRUNK_TOP, 10, tree_mat, -1.5))
 	var trunk_shape := CylinderShape3D.new()
 	trunk_shape.radius = 0.32
 	trunk_shape.height = 1.0
@@ -294,9 +295,10 @@ static func build() -> MeshLibrary:
 		var faces: Array = FACES[tile]
 		var tile_name: String = Tile.keys()[tile]
 		var mat := terrain if tile in TERRAIN_TILES else opaque
-		_add_item(lib, wedge_id(tile), tile_name + "_WEDGE",
-			_build_wedge(faces[0], faces[1], faces[2], mat), _wedge_hull())
 		for i in _patches.size():
+			var q := _patches[i]
+			if tile in FLAT_STEP_TILES and maxi(maxi(q[0], q[1]), maxi(q[2], q[3])) - mini(mini(q[0], q[1]), mini(q[2], q[3])) > 4:
+				continue
 			var corners := _corner_heights(PATCH_FIRST + i)
 			_add_item(lib, item_id(PATCH_FIRST + i, tile), "%s_P%d" % [tile_name, i],
 				_build_patch(corners, faces, mat), _patch_hull(corners))
@@ -329,15 +331,8 @@ static func _patch_hull(corners: Array[float]) -> PackedVector3Array:
 	return pts
 
 
-static func _wedge_hull() -> PackedVector3Array:
-	return PackedVector3Array([
-		Vector3(-0.5, -0.5, -0.5), Vector3(0.5, -0.5, -0.5),
-		Vector3(-0.5, -0.5, 0.5), Vector3(0.5, -0.5, 0.5),
-		Vector3(-0.5, 0.5, 0.5), Vector3(0.5, 0.5, 0.5)])
-
-
-## `variant` is "" for plain, "WATER" for the translucent sheet, or "CUTOUT"
-## for two-sided alpha-tested plants.
+## `variant` is "" for plain, "WATER" for the translucent sheet, "CUTOUT"
+## for two-sided alpha-tested plants, or "CANOPY" for translucent foliage.
 static func _make_material(atlas: Texture2D, variant: String) -> ShaderMaterial:
 	var code := FileAccess.get_file_as_string("res://shaders/tiles.gdshader")
 	if not variant.is_empty():
@@ -382,21 +377,7 @@ static func _add_face(st: SurfaceTool, n: Vector3, up: Vector3, slot: int) -> vo
 		c + right * 0.5 - up * 0.5,
 		c - right * 0.5 - up * 0.5,
 	]
-	var r := _slot_uv(slot)
-	var uv: Array[Vector2] = [
-		r.position,
-		Vector2(r.end.x, r.position.y),
-		r.end,
-		Vector2(r.position.x, r.end.y),
-	]
-	# Godot treats clockwise winding as front-facing; flip if we built it CCW.
-	if (p[1] - p[0]).cross(p[2] - p[0]).dot(n) > 0.0:
-		p.reverse()
-		uv.reverse()
-	st.set_normal(n)
-	for i in [0, 1, 2, 0, 2, 3]:
-		st.set_uv(uv[i])
-		st.add_vertex(p[i])
+	_quad(st, p, _slot_corners(slot), n)
 
 
 ## Four texture coordinates for the corners of part of a slot: (u0,v0) is
@@ -408,6 +389,8 @@ static func _slot_corners(slot: int, u0 := 0.0, v0 := 0.0, u1 := 1.0, v1 := 1.0)
 	return [Vector2(a.x, a.y), Vector2(b.x, a.y), Vector2(b.x, b.y), Vector2(a.x, b.y)]
 
 
+## Godot treats clockwise winding as front-facing; both helpers flip the
+## order when the given points were built counter-clockwise for `n`.
 static func _quad(st: SurfaceTool, p: Array[Vector3], uv: Array[Vector2], n: Vector3) -> void:
 	var pts := p.duplicate()
 	var uvs := uv.duplicate()
@@ -430,28 +413,6 @@ static func _tri(st: SurfaceTool, p: Array[Vector3], uv: Array[Vector2], n: Vect
 	for i in 3:
 		st.set_uv(uvs[i])
 		st.add_vertex(pts[i])
-
-
-## Ramp rising toward +z: low edge at z = -0.5 on the floor, high edge at
-## z = +0.5 level with a cube top. Rotate with rotation_index() for other facings.
-static func _build_wedge(top: int, side: int, bottom: int, mat: Material) -> ArrayMesh:
-	var st := SurfaceTool.new()
-	st.begin(Mesh.PRIMITIVE_TRIANGLES)
-	st.set_material(mat)
-	var lo_l := Vector3(-0.5, -0.5, -0.5)
-	var lo_r := Vector3(0.5, -0.5, -0.5)
-	var hi_l := Vector3(-0.5, 0.5, 0.5)
-	var hi_r := Vector3(0.5, 0.5, 0.5)
-	var bk_l := Vector3(-0.5, -0.5, 0.5)
-	var bk_r := Vector3(0.5, -0.5, 0.5)
-	_quad(st, [bk_l, bk_r, lo_r, lo_l], _slot_corners(bottom), Vector3.DOWN)
-	_quad(st, [hi_l, hi_r, bk_r, bk_l], _slot_corners(side), Vector3.BACK)
-	_quad(st, [hi_l, hi_r, lo_r, lo_l], _slot_corners(top), Vector3(0, 1, -1).normalized())
-	var side_uv := _slot_corners(side)
-	# Side triangles: texture u runs along z, v down from the high edge.
-	_tri(st, [lo_l, hi_l, bk_l], [side_uv[3], side_uv[1], side_uv[2]], Vector3.LEFT)
-	_tri(st, [lo_r, hi_r, bk_r], [side_uv[2], side_uv[0], side_uv[3]], Vector3.RIGHT)
-	return st.commit()
 
 
 const CORNER_X: Array[float] = [-0.5, 0.5, 0.5, -0.5]
@@ -506,14 +467,8 @@ static func _build_patch(corners: Array[float], faces: Array, mat: Material) -> 
 
 
 ## Adds an upward square covering [x, x+1) x [z, z+1) at height y to a
-## SurfaceTool, textured with the water slot.
-static func add_water_quad(st: SurfaceTool, x: float, y: float, z: float) -> void:
-	_quad(st, [Vector3(x, y, z), Vector3(x + 1, y, z), Vector3(x + 1, y, z + 1), Vector3(x, y, z + 1)],
-		_slot_corners(Slot.WATER), Vector3.UP)
-
-
-## As add_water_quad, with a height per corner (order: (-x,-z), (+x,-z),
-## (+x,+z), (-x,+z)) so a sheet can slope.
+## Adds an upward square covering [x, x+1) x [z, z+1) with a height per
+## corner (order: (-x,-z), (+x,-z), (+x,+z), (-x,+z)) so a sheet can slope.
 static func add_water_patch(st: SurfaceTool, x: float, z: float, ys: Array[float]) -> void:
 	var p: Array[Vector3] = [Vector3(x, ys[0], z), Vector3(x + 1, ys[1], z), Vector3(x + 1, ys[2], z + 1), Vector3(x, ys[3], z + 1)]
 	var n := (p[1] - p[0]).cross(p[3] - p[0]).normalized()
@@ -524,7 +479,7 @@ static func add_water_patch(st: SurfaceTool, x: float, z: float, ys: Array[float
 
 ## Cylinder along Y filling the cell height, textured with a side slot around
 ## it and a cap slot on the ends mapped radially.
-static func _build_cylinder(radius: float, side: int, cap: int, segments: int, mat: Material) -> ArrayMesh:
+static func _build_cylinder(radius: float, side: int, cap: int, segments: int, mat: Material, y0: float = -0.5) -> ArrayMesh:
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
 	st.set_material(mat)
@@ -540,8 +495,8 @@ static func _build_cylinder(radius: float, side: int, cap: int, segments: int, m
 		var u1 := r.position.x + r.size.x * float(i + 1) / segments
 		var top0 := d0 * radius + Vector3(0, 0.5, 0)
 		var top1 := d1 * radius + Vector3(0, 0.5, 0)
-		var bot0 := d0 * radius + Vector3(0, -0.5, 0)
-		var bot1 := d1 * radius + Vector3(0, -0.5, 0)
+		var bot0 := d0 * radius + Vector3(0, y0, 0)
+		var bot1 := d1 * radius + Vector3(0, y0, 0)
 		# Side quad with smooth radial normals, wound so the face points outward.
 		var pts: Array[Vector3] = [top0, top1, bot1, bot0]
 		var nrm: Array[Vector3] = [d0, d1, d1, d0]
@@ -559,7 +514,7 @@ static func _build_cylinder(radius: float, side: int, cap: int, segments: int, m
 		var cu0 := centre + Vector2(cos(a0), sin(a0)) * c.size * 0.5
 		var cu1 := centre + Vector2(cos(a1), sin(a1)) * c.size * 0.5
 		_tri(st, [Vector3(0, 0.5, 0), top0, top1], [centre, cu0, cu1], Vector3.UP)
-		_tri(st, [Vector3(0, -0.5, 0), bot0, bot1], [centre, cu0, cu1], Vector3.DOWN)
+		_tri(st, [Vector3(0, y0, 0), bot0, bot1], [centre, cu0, cu1], Vector3.DOWN)
 	return st.commit()
 
 

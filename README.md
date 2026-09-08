@@ -7,18 +7,15 @@ same scale; there is no zoom-in view.
 ## Milestone 1 (current)
 
 - 1 m cubes on a grid, character two cubes tall
-- Partial shapes for terrain and roof tiles, rotated per cell with GridMap
-  orientations: a 45 degree wedge plus every "patch" whose four corners sit
-  at quarter-cube heights spanning at most one cube, with the lowest corner
-  inside the cell and the others allowed up to a cube above it (379 shapes,
-  enumerated at startup and built by one mesh builder). Vertex heights are
-  clustered per shared vertex and then relaxed so almost every column fits
-  one piece. Terrain heights are averaged per grid
-  vertex so one-cube steps become smooth quarter-cube slopes in every
-  direction, with cliffs, trunks and shorelines kept sharp; a column pulled
-  both ways stacks two pieces. House roofs are hip roofs from the same
-  shapes. The character walks them with fractional stand heights
-- Deterministic noise terrain: hills, ridged mountains, sea, sand, snow line, forests
+- The ground surface is a heightfield on the grid vertices: each vertex is
+  the mean of the continuous terrain height of the four columns around it,
+  snapped to quarter cubes. Every column reads its four corners from that
+  shared field, so neighbouring pieces always meet, and becomes one "patch"
+  piece (about a thousand shapes enumerated at startup from corner heights
+  and built by one mesh builder) in the cell above its topmost cube. Ground
+  too steep for a piece becomes a plain cube column, a cliff. Roofs use the
+  same shapes. The character walks pieces with fractional stand heights,
+  read from each loaded chunk's surface cells
 - Trees with cylindrical trunks and one canopy mesh each in four styles
   (round, tall, wide, pine) with three leaf colours; invisible leaf filler
   cells keep the canopy solid for the cover check. Canopies are slightly

@@ -152,30 +152,6 @@ func _setup_hud() -> void:
 	layer.add_child(hud)
 
 
-## First grassy column near the origin whose neighbourhood is flat and treeless.
-func _find_spawn() -> Vector3i:
-	for r in range(0, 256):
-		for dz in range(-r, r + 1):
-			for dx in range(-r, r + 1):
-				if maxi(absi(dx), absi(dz)) != r:
-					continue
-				var h := gen.height_at(dx, dz)
-				if h <= WorldGen.SEA_LEVEL + 1 or h >= WorldGen.STONE_LINE:
-					continue
-				if _is_flat_clearing(dx, dz, h):
-					return Vector3i(dx, h + 1, dz)
-	return Vector3i(0, gen.height_at(0, 0) + 1, 0)
-
-
-func _is_flat_clearing(x: int, z: int, h: int) -> bool:
-	for dz in range(-2, 3):
-		for dx in range(-2, 3):
-			var nh := gen.height_at(x + dx, z + dz)
-			if absi(nh - h) > 1 or gen.tree_at(x + dx, z + dz, nh) > 0:
-				return false
-	return true
-
-
 func _nearest_standable(c: Vector3i) -> Vector3i:
 	for r in range(0, 8):
 		for dz in range(-r, r + 1):
@@ -437,12 +413,10 @@ func _place_shape_samples() -> void:
 	var y := town.height + 1
 	var z := town.origin.y + 33
 	var x := town.origin.x + 4
-	for k in 4:
-		e.set_cell(Vector3i(x + k, y, z), TileLibrary.wedge_id(g), TileLibrary.rotation_index(k))
 	var n := TileLibrary.patch_count()
 	for i in n:
-		e.set_cell(Vector3i(x + 5 + i % 26, y, z - 2 * (i / 26)), TileLibrary.item_id(TileLibrary.PATCH_FIRST + i, g))
-	print("selftest: shape samples: wedges x4, then %d patch shapes from x=%d z=%d" % [n, x, z])
+		e.set_cell(Vector3i(x + i % 26, y, z - 2 * (i / 26)), TileLibrary.item_id(TileLibrary.PATCH_FIRST + i, g))
+	print("selftest: shape samples: %d patch shapes from x=%d z=%d" % [n, x, z])
 
 
 ## Simulates holding W for a while, then releasing, and reports whether the

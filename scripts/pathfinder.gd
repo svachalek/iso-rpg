@@ -65,21 +65,17 @@ func feet_height(c: Vector3i) -> float:
 	return c.y + TileLibrary.stand_offset(t)
 
 
-## The feet cell for a column, or null if nothing can stand there. Checks the
-## surface cell itself first (a wedge or slab replacing the top cube), then
-## the cell above it (a cube top, or a slab placed on the ground).
+## The feet cell for a column, or null if nothing can stand there: the
+## surface cell (a slope piece, or empty over the cube top), or a bridge
+## deck reached through water above it.
 func stand_cell(x: int, z: int) -> Variant:
-	if not _cm.is_loaded_at(x, z):
+	var s := _cm.surface_cell(x, z)
+	if s < 0:
 		return null
-	var h := _gen.height_at(x, z)
-	var on_surface := Vector3i(x, h, z)
-	if is_partial(on_surface) and is_standable(on_surface):
-		return on_surface
-	# Scan up: the cube top, or a bridge deck reached through water. A solid
-	# cube met without water beneath it is a wall or a building, not a step.
+	# A solid cube met without water beneath it is a wall or a building.
 	var through_water := false
 	var level := _gen.water_level_at(x, z)
-	for y in range(h + 1, h + 6):
+	for y in range(s, s + 5):
 		var c := Vector3i(x, y, z)
 		if is_standable(c):
 			return c

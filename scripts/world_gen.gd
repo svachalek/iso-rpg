@@ -29,8 +29,8 @@ var _river := FastNoiseLite.new()
 
 const RIVER_HALF_WIDTH := 0.04   # in noise units; channel where |river noise| is below this
 const RIVER_MAX_HALF_CELLS := 4.0  # widest half width in cells, where the noise runs flat
-const RIVER_BANK_CELLS := 18.0   # how far beyond the channel the bank rule can reach
 const RIVER_LEVEL_STEP := 6.0      # cells along the river between level samples
+const RIVER_BANK_CELLS := 18.0   # how far beyond the channel the bank rule can reach
 
 
 func _init(seed_value: int = 1337) -> void:
@@ -47,9 +47,11 @@ func _init(seed_value: int = 1337) -> void:
 	_mountains.fractal_type = FastNoiseLite.FRACTAL_RIDGED
 	_mountains.fractal_octaves = 3
 
+	# Gentle enough that hills stay within one slope piece per cell; only
+	# the mountain term produces cliffs.
 	_detail.seed = seed_value + 2
 	_detail.noise_type = FastNoiseLite.TYPE_SIMPLEX_SMOOTH
-	_detail.frequency = 0.05
+	_detail.frequency = 0.04
 	_detail.fractal_octaves = 2
 
 	_forest.seed = seed_value + 3
@@ -93,13 +95,6 @@ func water_surface_at(x: int, z: int) -> float:
 	return _terrain(x, z).y
 
 
-## Distance from the nearest river centre line in half widths: below 1 is
-## in the channel.
-func river_t(x: int, z: int) -> float:
-	var p := _river_probe(x, z)
-	return p[0] / p[1]
-
-
 ## True within a few cells of a river channel; no trees or props there.
 func near_river(x: int, z: int) -> bool:
 	var p := _river_probe(x, z)
@@ -134,7 +129,7 @@ func _smooth_height(x: float, z: float) -> float:
 ## channel's centre line, averaged along the river, so it is constant across
 ## the river's width and falls smoothly along its length.
 func _terrain(x: int, z: int) -> Vector2:
-	var h := _smooth_height(x, z) + _detail.get_noise_2d(x, z) * 1.5
+	var h := _smooth_height(x, z) + _detail.get_noise_2d(x, z) * 0.8
 	var probe := _river_probe(x, z)
 	var dist := probe[0]
 	var hw := probe[1]
@@ -237,156 +232,48 @@ func _paint_material_map(heights: PackedInt32Array, heights_f: PackedFloat32Arra
 	material_texture.update(material_map)
 
 
-## Surface height at every grid vertex of the bordered chunk, stored once
-## per adjacent column (4 values per vertex, slots 0..3 for the columns at
-## (-x,-z), (+x,-z), (-x,+z), (+x,+z) of the vertex). The four columns are
-## clustered by height, each cluster spanning at most two cubes, and every
-## column in a cluster gets the same value: the cluster's mean top, clamped
-## once so it lies within a cube of each member's top. So a one-cube step averages into a half-cube slope, a vertex where
-## three heights meet (common on gentle terraces) still averages to one
-## shared value with at most a one-cube corner span, columns on the same
-## side of a real cliff agree exactly, and the cliff stays a vertical face.
-## Tree columns form their own cluster so trunks stay level.
-static func _vertex_heights(heights: PackedInt32Array, trees: PackedInt32Array, w: int) -> PackedFloat32Array:
+## Result of building one chunk: its water sheet (or null) and the surface
+## cell of every column, the cell just above the topmost cube (which holds
+## the column's slope piece when it has one).
+class ChunkBuild:
+	var water: Mesh
+	var surface: PackedInt32Array
+
+
+## The terrain surface is a heightfield on the grid vertices: each vertex is
+## the mean of the continuous height of the four columns around it, snapped
+## to quarter cubes. Every column reads its four corners from that shared
+## field, so neighbouring pieces always meet exactly. A column whose corners
+## span at most one cube becomes one patch piece in the cell above its
+## topmost cube; a column whose corners span more than a piece can carry
+## (steep ground) becomes a plain cube column reaching the highest corner,
+## which reads as a cliff.
+static func _vertex_heights(heights_f: PackedFloat32Array, w: int) -> PackedFloat32Array:
 	var vw := w + 1
 	var out := PackedFloat32Array()
-	out.resize(vw * vw * 4)
+	out.resize(vw * vw)
 	for vz in range(1, w):
 		for vx in range(1, w):
-			var cols: Array[int] = [(vz - 1) * w + vx - 1, (vz - 1) * w + vx, vz * w + vx - 1, vz * w + vx]
-			var base := (vz * vw + vx) * 4
-			# Sort the four by height, then walk the sorted order forming clusters.
-			var order: Array[int] = [0, 1, 2, 3]
-			order.sort_custom(func(a: int, b: int) -> bool: return heights[cols[a]] < heights[cols[b]])
-			var i := 0
-			while i < 4:
-				var j := i
-				var sum := 0
-				var tree_here := trees[cols[order[i]]] > 0
-				if tree_here:
-					j = i + 1
-					sum = heights[cols[order[i]]] + 1
-				else:
-					while j < 4 and trees[cols[order[j]]] == 0 and heights[cols[order[j]]] - heights[cols[order[i]]] <= 2:
-						sum += heights[cols[order[j]]] + 1
-						j += 1
-				# One shared value for the cluster, clamped once to a range every
-				# member can honour (within a cube of its own top). A cluster spans
-				# at most two cubes, so that range is never empty.
-				var mean := float(sum) / float(j - i)
-				var lowest_top := float(heights[cols[order[i]]] + 1)
-				var highest_top := float(heights[cols[order[j - 1]]] + 1)
-				var shared := clampf(mean, highest_top - 1.0, lowest_top + 1.0)
-				for k in range(i, j):
-					out[base + order[k]] = shared
-				i = j
+			# Column height h means its top cube is cell h, so the surface is h + 1.
+			var mean := (heights_f[(vz - 1) * w + vx - 1] + heights_f[(vz - 1) * w + vx]
+				+ heights_f[vz * w + vx - 1] + heights_f[vz * w + vx]) * 0.25 + 1.0
+			out[vz * vw + vx] = roundf(mean * 4.0) / 4.0
 	return out
 
 
-## Pulls together the corners of any column whose surface spans more than
-## one cube, which a single patch cannot express. Each move keeps the value
-## shared by every column at that vertex and inside the range they can all
-## honour, so neighbours still meet exactly. A few passes settle almost
-## every column; the rare leftover uses two stacked pieces.
-static func _relax_spans(verts: PackedFloat32Array, heights: PackedInt32Array, w: int) -> void:
+## Corner heights of column (ix, iz) in the order (-x,-z), (+x,-z), (+x,+z), (-x,+z).
+static func _corners(verts: PackedFloat32Array, w: int, ix: int, iz: int) -> Array[float]:
 	var vw := w + 1
-	var slot: Array[int] = [3, 2, 0, 1]
-	for sweep in 16:
-		var moved := false
-		for iz in range(1, w - 1):
-			for ix in range(1, w - 1):
-				var idx: Array[int] = []
-				var val: Array[float] = []
-				for i in 4:
-					var vx := ix + (1 if (i == 1 or i == 2) else 0)
-					var vz := iz + (1 if i >= 2 else 0)
-					idx.append((vz * vw + vx) * 4 + slot[i])
-					val.append(verts[idx[i]])
-				var lo_i := 0
-				var hi_i := 0
-				for i in range(1, 4):
-					if val[i] < val[lo_i]:
-						lo_i = i
-					if val[i] > val[hi_i]:
-						hi_i = i
-				var excess := val[hi_i] - val[lo_i] - 1.0
-				if excess <= 0.001:
-					continue
-				moved = true
-				# Moves are whole quarter cubes so shared values stay on the
-				# quarter grid the shapes are built from.
-				var step := ceilf(excess * 2.0) / 4.0
-				_move_vertex(verts, heights, w, idx[hi_i], -step)
-				_move_vertex(verts, heights, w, idx[lo_i], step)
-		if not moved:
-			break
-
-
-## Shifts one vertex value by `delta` for every column sharing it, clamped
-## to the range all of them can honour (within a cube of each top).
-static func _move_vertex(verts: PackedFloat32Array, heights: PackedInt32Array, w: int, index: int, delta: float) -> void:
-	var vw := w + 1
-	var base := index - index % 4
-	var v := verts[index]
-	var vi := base / 4
-	var vx := vi % vw
-	var vz := vi / vw
-	var cols: Array[int] = [(vz - 1) * w + vx - 1, (vz - 1) * w + vx, vz * w + vx - 1, vz * w + vx]
-	var lowest_top := 1e9
-	var highest_top := -1e9
-	var members: Array[int] = []
-	for k in 4:
-		if absf(verts[base + k] - v) < 0.0001:
-			members.append(k)
-			var top := float(heights[cols[k]] + 1)
-			lowest_top = minf(lowest_top, top)
-			highest_top = maxf(highest_top, top)
-	var target := clampf(v + delta, highest_top - 1.0, lowest_top + 1.0)
-	target = roundf(target * 4.0) / 4.0
-	for k in members:
-		verts[base + k] = target
-
-
-## Caps column (lx, lz) with the piece its corner heights call for. Corners
-## within one cube of each other make a single piece even when they straddle
-## the cube top; a wider span (a column between a two-cube drop and a
-## two-cube rise) falls back to two stacked pieces that meet at the top.
-static func _place_surface(gm: GridMap, lx: int, lz: int, h: int, surf: int, verts: PackedFloat32Array, w: int, ix: int, iz: int) -> void:
-	var vw := w + 1
-	var top := float(h + 1)
-	var all: Array[float] = []
-	var lower: Array[float] = []
-	var upper: Array[float] = []
-	# For each corner: the vertex, and which of its four columns this one is.
-	const SLOT: Array[int] = [3, 2, 0, 1]
-	for i in 4:
-		var vx := ix + (1 if (i == 1 or i == 2) else 0)
-		var vz := iz + (1 if i >= 2 else 0)
-		var v := verts[(vz * vw + vx) * 4 + SLOT[i]]
-		all.append(v)
-		lower.append(minf(v, top))
-		upper.append(maxf(v, top))
-	var lo := minf(minf(all[0], all[1]), minf(all[2], all[3]))
-	var hi := maxf(maxf(all[0], all[1]), maxf(all[2], all[3]))
-	var sets: Array = [all] if hi - lo <= 1.001 else [lower, upper]
-	for corners: Array[float] in sets:
-		var piece := TileLibrary.surface_piece(corners)
-		if piece.x >= 0:
-			gm.set_cell_item(Vector3i(lx, piece.z, lz),
-				TileLibrary.item_id(piece.x, surf), TileLibrary.rotation_index(piece.y))
+	return [verts[iz * vw + ix], verts[iz * vw + ix + 1], verts[(iz + 1) * vw + ix + 1], verts[(iz + 1) * vw + ix]]
 
 
 ## A sprinkling of weeds, flowers and stones on flat natural ground. Props
-## sit in the empty cell above the surface and are ignored by movement.
-func _place_prop(gm: GridMap, lx: int, lz: int, h: int, surf: int, wx: int, wz: int) -> void:
+## sit in the empty surface cell and are ignored by movement.
+func _place_prop(gm: GridMap, lx: int, lz: int, s: int, surf: int, wx: int, wz: int) -> void:
 	if surf != TileLibrary.Tile.GRASS and surf != TileLibrary.Tile.SAND:
 		return
 	if edits.heights.has(Vector2i(wx, wz)):
 		return  # keep hand-shaped ground (towns) tidy
-	if TileLibrary.is_partial(gm.get_cell_item(Vector3i(lx, h, lz))):
-		return
-	if gm.get_cell_item(Vector3i(lx, h + 1, lz)) != GridMap.INVALID_CELL_ITEM:
-		return
 	var r := _hash01(wx * 3 + 11, wz * 7 + 5)
 	var prop := -1
 	if surf == TileLibrary.Tile.GRASS:
@@ -404,7 +291,7 @@ func _place_prop(gm: GridMap, lx: int, lz: int, h: int, surf: int, wx: int, wz: 
 	if prop < 0:
 		return
 	var rot := int(_hash01(wx + 101, wz + 203) * 4.0)
-	gm.set_cell_item(Vector3i(lx, h + 1, lz), TileLibrary.prop_id(prop), TileLibrary.rotation_index(rot))
+	gm.set_cell_item(Vector3i(lx, s, lz), TileLibrary.prop_id(prop), TileLibrary.rotation_index(rot))
 
 
 ## Canopy style for the tree rooted at a column, by hash.
@@ -419,15 +306,20 @@ func _canopy_for(x: int, z: int) -> int:
 	return TileLibrary.Tile.CANOPY_PINE
 
 
+## Ground the generator may decorate: not hand-shaped, not a road, not a
+## river bank, and between the shore and the stone line.
+func is_natural_ground(x: int, z: int, h: int) -> bool:
+	if h <= SEA_LEVEL + 1 or h >= STONE_LINE:
+		return false
+	var col := Vector2i(x, z)
+	if edits.heights.has(col) or edits.surfaces.has(col):
+		return false
+	return not near_river(x, z)
+
+
 ## Trunk height of the tree rooted in this column, or 0 for none.
 func tree_at(x: int, z: int, h: int) -> int:
-	if h <= SEA_LEVEL + 1 or h >= STONE_LINE:
-		return 0
-	if not edits.surfaces.is_empty() and edits.surfaces.has(Vector2i(x, z)):
-		return 0  # never in the middle of a road or street
-	if near_river(x, z):
-		return 0
-	if edits.heights.has(Vector2i(x, z)):
+	if not is_natural_ground(x, z, h):
 		return 0
 	var own := _tree_score(x, z)
 	if own < 0.0:
@@ -440,8 +332,7 @@ func tree_at(x: int, z: int, h: int) -> int:
 			var other := _tree_score(x + dx, z + dz)
 			if other >= 0.0 and (other < own or (other == own and (dz < 0 or (dz == 0 and dx < 0)))):
 				return 0
-	# Trunks stand on level ground: every neighbour at the same height, so
-	# no cliff face or ramp ever has to meet the tree column.
+	# Trunks prefer level ground.
 	for dz in range(-1, 2):
 		for dx in range(-1, 2):
 			if (dx != 0 or dz != 0) and height_at(x + dx, z + dz) != h:
@@ -467,100 +358,135 @@ func _hash01(x: int, z: int) -> float:
 
 
 ## Populates an empty GridMap with the chunk at chunk coordinate (cx, cz).
-## Returns the chunk's water sheet mesh (in the GridMap's local space), or
-## null when the chunk has no water.
-func fill_chunk(gm: GridMap, cx: int, cz: int, size: int) -> Mesh:
+func fill_chunk(gm: GridMap, cx: int, cz: int, size: int) -> ChunkBuild:
 	var w := size + BORDER * 2
 	var ox := cx * size - BORDER
 	var oz := cz * size - BORDER
 
-	var heights := PackedInt32Array()
-	heights.resize(w * w)
+	# Every column's terrain, computed once: continuous height, water surface,
+	# and their cube versions.
 	var heights_f := PackedFloat32Array()
 	heights_f.resize(w * w)
-	var levels := PackedInt32Array()
-	levels.resize(w * w)
+	var heights := PackedInt32Array()
+	heights.resize(w * w)
 	var surfaces := PackedFloat32Array()
 	surfaces.resize(w * w)
+	var levels := PackedInt32Array()
+	levels.resize(w * w)
 	for lz in w:
 		for lx in w:
-			var hf := height_f(ox + lx, oz + lz)
-			heights_f[lz * w + lx] = hf
-			heights[lz * w + lx] = int(floor(hf))
-			var ws := water_surface_at(ox + lx, oz + lz)
-			surfaces[lz * w + lx] = ws
-			levels[lz * w + lx] = int(floor(ws))
+			var i := lz * w + lx
+			var wx := ox + lx
+			var wz := oz + lz
+			var edited: Variant = edits.heights.get(Vector2i(wx, wz)) if not edits.heights.is_empty() else null
+			var t := Vector2(float(edited), float(SEA_LEVEL)) if edited != null else _terrain(wx, wz)
+			heights_f[i] = t.x
+			heights[i] = int(floor(t.x))
+			surfaces[i] = t.y
+			levels[i] = int(floor(t.y))
+
+	# The surface: vertex heightfield, then each column's piece or cliff.
+	var verts := _vertex_heights(heights_f, w)
+	var scell := PackedInt32Array()  # surface cell per column
+	scell.resize(w * w)
+	var pieces: Array[Vector3i] = []  # (shape, rotation, cell) per column, shape -1 for none
+	pieces.resize(w * w)
+	for iz in range(1, w - 1):
+		for ix in range(1, w - 1):
+			var i := iz * w + ix
+			var c := _corners(verts, w, ix, iz)
+			var lo: float = c.min()
+			var hi: float = c.max()
+			# A piece sits in the cell holding its lowest corner and may rise
+			# MAX_PIECE_RISE above that cell's floor.
+			var cell := floori(lo + 0.001)
+			if hi - cell <= TileLibrary.MAX_PIECE_RISE + 0.001:
+				var piece := TileLibrary.surface_piece(c)
+				pieces[i] = piece
+				scell[i] = piece.z
+			else:
+				pieces[i] = Vector3i(-1, 0, 0)
+				scell[i] = ceili(hi - 0.001)
+
 	var trees := PackedInt32Array()
 	trees.resize(w * w)
-	for lz in w:
-		for lx in w:
-			trees[lz * w + lx] = tree_at(ox + lx, oz + lz, heights[lz * w + lx])
-	var verts := _vertex_heights(heights, trees, w)
-	_relax_spans(verts, heights, w)
+	for lz in range(1, w - 1):
+		for lx in range(1, w - 1):
+			var i := lz * w + lx
+			if pieces[i].x >= 0 or scell[i] == heights[i] + 1:
+				trees[i] = tree_at(ox + lx, oz + lz, heights[i])
+
 	_paint_material_map(heights, heights_f, levels, w, ox, oz, size)
 	var water_st := SurfaceTool.new()
 	water_st.begin(Mesh.PRIMITIVE_TRIANGLES)
 	water_st.set_material(TileLibrary.water_material)
 	var water_quads := 0
 
-	# Terrain columns. Fill from the surface down to just below the lowest
-	# neighbour so every exposed side face is backed by a cube. A column one
-	# cube above a neighbour gets a wedge on top so the step becomes a ramp.
 	for lz in size:
 		for lx in size:
 			var ix := lx + BORDER
 			var iz := lz + BORDER
-			var h := heights[iz * w + ix]
-			var hx0 := heights[iz * w + ix - 1]
-			var hx1 := heights[iz * w + ix + 1]
-			var hz0 := heights[(iz - 1) * w + ix]
-			var hz1 := heights[(iz + 1) * w + ix]
-			var lo := mini(mini(hx0, hx1), mini(hz0, hz1))
-			lo = mini(lo, h) - 1
-			var level := levels[iz * w + ix]
-			var surf := surface_tile(h, level)
+			var i := iz * w + ix
+			var s := scell[i]
+			var has_piece := pieces[i].x >= 0
+			var top_cube := s - 1
+			# Fill from the topmost cube down to just below the lowest
+			# neighbour's, so every exposed side face is backed by a cube.
+			var lo := mini(mini(scell[i - 1], scell[i + 1]), mini(scell[i - w], scell[i + w]))
+			lo = mini(lo, s) - 2
+			var level := levels[i]
+			var surf := surface_tile(heights[i], level)
 			if not edits.surfaces.is_empty():
 				surf = edits.surfaces.get(Vector2i(ox + ix, oz + iz), surf)
-			for y in range(lo, h + 1):
-				var depth := h - y
+			for y in range(lo, top_cube + 1):
+				var depth := top_cube - y
 				gm.set_cell_item(Vector3i(lx, y, lz), surf if depth == 0 else underground_tile(surf, depth))
-			for y in range(h + 1, level + 1):
+			if has_piece:
+				var p := pieces[i]
+				gm.set_cell_item(Vector3i(lx, p.z, lz), TileLibrary.item_id(p.x, surf), TileLibrary.rotation_index(p.y))
+			for y in range(s + 1 if has_piece else s, level + 1):
 				gm.set_cell_item(Vector3i(lx, y, lz), TileLibrary.Tile.WATER)
-			# The sheet also covers bank columns, whose slopes dip under it. Its
-			# corners average the surrounding columns' surfaces so a river's
-			# sheet slopes smoothly along the channel.
-			if h <= level:
+			# The water sheet covers every column whose ground is at or under
+			# the water; its corners average the surrounding water columns'
+			# surfaces so a river's sheet slopes smoothly along the channel.
+			if top_cube <= level:
 				var ys: Array[float] = []
-				for i in 4:
-					var vx := ix + (1 if (i == 1 or i == 2) else 0)
-					var vz := iz + (1 if i >= 2 else 0)
-					# Average only over neighbouring columns that are water
-					# too, so dry ground next to the sheet cannot tilt it.
+				for k in 4:
+					var vx := ix + (1 if (k == 1 or k == 2) else 0)
+					var vz := iz + (1 if k >= 2 else 0)
 					var sum := 0.0
 					var count := 0
 					for c: int in [(vz - 1) * w + vx - 1, (vz - 1) * w + vx, vz * w + vx - 1, vz * w + vx]:
-						if heights[c] <= levels[c]:
+						if scell[c] - 1 <= levels[c]:
 							sum += surfaces[c]
 							count += 1
 					ys.append(sum / count + 0.9)
 				TileLibrary.add_water_patch(water_st, lx, lz, ys)
 				water_quads += 1
-			if trees[iz * w + ix] == 0:
-				_place_surface(gm, lx, lz, h, surf, verts, w, ix, iz)
-				_place_prop(gm, lx, lz, h, surf, ox + ix, oz + iz)
+			# Props stand in the empty cell above the surface: on a bare cube
+			# top, or one cell up on a piece whose surface is close to that
+			# cell's floor (within a quarter cube) and nearly level.
+			if trees[i] == 0 and top_cube > level:
+				if not has_piece:
+					_place_prop(gm, lx, lz, s, surf, ox + ix, oz + iz)
+				else:
+					var c := _corners(verts, w, ix, iz)
+					var mean := (c[0] + c[1] + c[2] + c[3]) * 0.25 - float(s)
+					if c.max() - c.min() <= 0.5 and absf(mean - 1.0) <= 0.25:
+						_place_prop(gm, lx, lz, s + 1, surf, ox + ix, oz + iz)
 
-	# Trees, including ones rooted just outside the chunk whose canopy spills in.
-	for tz in w:
-		for tx in w:
-			var h := heights[tz * w + tx]
+	# Trees, including ones rooted just outside the chunk whose canopy spills
+	# in. The trunk starts in the cell above the surface cell and its mesh
+	# reaches one cell down, so it emerges from a slope piece or a cube top.
+	for tz in range(1, w - 1):
+		for tx in range(1, w - 1):
 			var th := trees[tz * w + tx]
 			if th == 0:
 				continue
 			var lx := tx - BORDER
 			var lz := tz - BORDER
-			var base := h + 1
+			var base := scell[tz * w + tx] + 1
 			var top := base + th - 1
-			# Canopy sits at the top of the trunk, never below head height.
 			for dy in range(-1, 2):
 				for dz in range(-2, 3):
 					for dx in range(-2, 3):
@@ -587,4 +513,11 @@ func fill_chunk(gm: GridMap, cx: int, cz: int, size: int) -> Mesh:
 		var v: Vector2i = overrides[local]
 		gm.set_cell_item(local, v.x, v.y)
 
-	return water_st.commit() if water_quads > 0 else null
+	var build := ChunkBuild.new()
+	build.water = water_st.commit() if water_quads > 0 else null
+	build.surface = PackedInt32Array()
+	build.surface.resize(size * size)
+	for lz in size:
+		for lx in size:
+			build.surface[lz * size + lx] = scell[(lz + BORDER) * w + lx + BORDER]
+	return build

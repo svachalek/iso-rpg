@@ -11,6 +11,7 @@ var world_gen: WorldGen
 var mesh_library: MeshLibrary
 
 var _chunks := {}  # Vector2i -> GridMap
+var _surfaces := {}  # Vector2i -> PackedInt32Array of surface cells per column
 var _pending: Array[Vector2i] = []
 var _center := Vector2i(1 << 20, 1 << 20)
 
@@ -61,6 +62,7 @@ func update_center(world_pos: Vector3) -> void:
 		if maxi(absi(d.x), absi(d.y)) > load_radius + 1:
 			_chunks[k].queue_free()
 			_chunks.erase(k)
+			_surfaces.erase(k)
 
 
 func load_all_pending() -> void:
@@ -79,14 +81,15 @@ func _load_next() -> void:
 	gm.cell_octant_size = 16
 	gm.position = Vector3(k.x * chunk_size, 0, k.y * chunk_size)
 	add_child(gm)
-	var water := world_gen.fill_chunk(gm, k.x, k.y, chunk_size)
-	if water:
+	var build := world_gen.fill_chunk(gm, k.x, k.y, chunk_size)
+	if build.water:
 		var sheet := MeshInstance3D.new()
 		sheet.name = "Water"
-		sheet.mesh = water
+		sheet.mesh = build.water
 		sheet.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		gm.add_child(sheet)
 	_chunks[k] = gm
+	_surfaces[k] = build.surface
 
 
 ## Tile at a world cell, or GridMap.INVALID_CELL_ITEM if empty or not loaded.
@@ -96,6 +99,16 @@ func get_cell(p: Vector3i) -> int:
 	if gm == null:
 		return GridMap.INVALID_CELL_ITEM
 	return gm.get_cell_item(Vector3i(p.x - k.x * chunk_size, p.y, p.z - k.y * chunk_size))
+
+
+## The surface cell of a loaded column (the cell above its topmost cube),
+## or -1 when the chunk is not loaded.
+func surface_cell(x: int, z: int) -> int:
+	var k := chunk_of(x, z)
+	var cells: PackedInt32Array = _surfaces.get(k, PackedInt32Array())
+	if cells.is_empty():
+		return -1
+	return cells[(z - k.y * chunk_size) * chunk_size + (x - k.x * chunk_size)]
 
 
 func is_loaded_at(x: int, z: int) -> bool:
