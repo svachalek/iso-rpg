@@ -6,8 +6,11 @@ extends Node3D
 signal arrived
 
 const SPEED := 4.0  # world units per second
+const RUN_SCALE := 2.0
 
 var cell: Vector3i
+## Multiplies SPEED; the caller raises it while a run key is held.
+var speed_scale := 1.0
 ## Called when the path runs out; may return the next feet cell or null.
 ## Lets held movement keys chain steps without a pause between cells.
 var step_provider: Callable
@@ -115,9 +118,10 @@ func _process(delta: float) -> void:
 				break
 			_begin_step(_path.pop_front())
 		var step_len := maxf(_from.distance_to(_to), 0.001)
-		var need := (1.0 - _t) * step_len / SPEED
+		var speed := SPEED * speed_scale
+		var need := (1.0 - _t) * step_len / speed
 		var use := minf(need, remaining)
-		_t = minf(_t + use * SPEED / step_len, 1.0)
+		_t = minf(_t + use * speed / step_len, 1.0)
 		remaining -= use
 		if _t >= 1.0 - 1e-6:
 			_t = 1.0

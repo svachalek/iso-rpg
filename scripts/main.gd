@@ -200,6 +200,7 @@ func _nearest_standable(c: Vector3i) -> Vector3i:
 
 
 func _process(delta: float) -> void:
+	player.speed_scale = Player.RUN_SCALE if Input.is_key_pressed(KEY_SHIFT) else 1.0
 	chunks.update_center(player.global_position)
 	_covered = _is_covered()
 	_update_occlusion(delta)

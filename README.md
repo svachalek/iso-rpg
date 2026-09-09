@@ -185,6 +185,7 @@ with `class_name` so the class cache exists):
 | Input | Action |
 |---|---|
 | W A S D or arrows | walk along the grid axes: W is up-right on screen, D down-right, S down-left, A up-left; two keys for a diagonal; hold to keep walking |
+| Shift | run: twice walking speed while held |
 | Left click | walk to the clicked column; clicks pass through sliced roofs and cut-down buildings |
 | Q / E | rotate camera 90 degrees |
 | Mouse wheel | zoom, on top of the auto zoom |
