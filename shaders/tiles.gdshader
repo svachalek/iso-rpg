@@ -64,6 +64,9 @@ void fragment() {
 #ifdef CANOPY
 	ALPHA = 0.9;  // a hint of what is under the foliage; shadows come from a twin item
 #endif
+#ifdef GLOW
+	EMISSION = tex.rgb * 1.6;  // flames
+#endif
 
 	vec3 world_pos = (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz;
 	vec3 rel = world_pos - player_pos;

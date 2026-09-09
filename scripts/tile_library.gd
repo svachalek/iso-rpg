@@ -16,6 +16,65 @@ const CANOPY_SHADOW_OFFSET := 4  # twin id = canopy id + this
 const PROP_BASE := 60000  # above any shape * 100 + tile, below GridMap's 16-bit item limit
 enum Prop { WEEDS, FLOWERS_A, FLOWERS_B, STONES, PEBBLES }
 
+## Furniture: KayKit models (assets/kaykit_dungeon) loaded at runtime and
+## scaled to the cube grid. An item occupies a footprint of whole cells from
+## its anchor cell (see furniture_cells); the other cells hold FURNITURE_FILL
+## so they block movement too. Wall items hang with their back on the wall
+## behind the cell (-z before rotation) and may be passable when mounted
+## high enough to walk under.
+const FURNITURE_BASE := 61000
+const FURNITURE_FILL := FURNITURE_BASE + 99
+enum Furniture { BED, BED_FANCY, BED_MAT, CHAIR, STOOL, TABLE, TABLE_FOOD, TABLE_DRINK, TABLE_BIG, TABLE_BIG_SET,
+	SHELVES, SHELF, BARREL, BOX, CRATES, KEG, CHEST, TORCH, FIREPLACE, COUNTER,
+	WALL_G, WALL_G_WINDOW, WALL_G_DOOR, WALL_U, WALL_U_WINDOW, POST_G, POST_U, BAND, BAND_POST,
+	STAIR_POST, STAIR_POST_TOP }
+const FURNITURE_SCALE := 2.0 / 3.0  # the pack's 4-unit walls become 3 cubes; a bed spans 1 by 2 cells
+## file, scale, footprint cells (w along x, d along z), then for wall items:
+## wall = true, mount plane z in model units (which lands on the wall face),
+## y offset in model units, passable.
+const FURNITURE_SPECS := {
+	Furniture.BED: {"file": "bed_frame", "size": Vector2i(1, 2)},
+	Furniture.BED_FANCY: {"file": "bed_decorated", "size": Vector2i(2, 2)},
+	Furniture.BED_MAT: {"file": "bed_floor", "size": Vector2i(1, 2)},
+	Furniture.CHAIR: {"file": "chair", "size": Vector2i(1, 1)},
+	Furniture.STOOL: {"file": "stool", "size": Vector2i(1, 1)},
+	Furniture.TABLE: {"file": "table_small", "size": Vector2i(1, 1)},
+	Furniture.TABLE_FOOD: {"file": "table_small_decorated_A", "size": Vector2i(1, 1)},
+	Furniture.TABLE_DRINK: {"file": "table_small_decorated_B", "size": Vector2i(1, 1)},
+	Furniture.TABLE_BIG: {"file": "table_medium", "size": Vector2i(2, 2)},
+	Furniture.TABLE_BIG_SET: {"file": "table_medium_decorated_A", "size": Vector2i(2, 2)},
+	Furniture.SHELVES: {"file": "shelves", "size": Vector2i(2, 1), "wall": true, "mount": 0.25, "y": 0.0},
+	Furniture.SHELF: {"file": "shelf_small", "size": Vector2i(1, 1), "wall": true, "mount": 0.0, "y": 1.6, "passable": true},
+	Furniture.BARREL: {"file": "barrel_small", "size": Vector2i(1, 1)},
+	Furniture.BOX: {"file": "box_small", "size": Vector2i(1, 1)},
+	Furniture.CRATES: {"file": "crates_stacked", "size": Vector2i(2, 2), "scale": 0.6},
+	Furniture.KEG: {"file": "keg", "size": Vector2i(1, 1), "scale": 0.55},
+	Furniture.CHEST: {"file": "chest", "size": Vector2i(1, 1), "scale": 0.58},
+	Furniture.TORCH: {"file": "torch_mounted", "size": Vector2i(1, 1), "wall": true, "mount": 0.0, "y": 1.7, "passable": true},
+	# Built in code in the pack's style (see _build_fireplace, _build_counter).
+	Furniture.FIREPLACE: {"build": "fireplace", "size": Vector2i(2, 1), "wall": true},
+	Furniture.COUNTER: {"build": "counter", "size": Vector2i(1, 1)},
+	# House walls: thin timber-frame panels three cubes tall, flush with the
+	# inner edge of their cell (the interior is toward -z before rotation).
+	# Ground panels stand on a stone plinth; posts fill corner cells; bands
+	# edge an upper floor's row. The doorway is walked through.
+	Furniture.WALL_G: {"build": "wall", "size": Vector2i(1, 1)},
+	Furniture.WALL_G_WINDOW: {"build": "wall", "size": Vector2i(1, 1)},
+	Furniture.WALL_G_DOOR: {"build": "wall", "size": Vector2i(1, 1), "passable": true},
+	Furniture.WALL_U: {"build": "wall", "size": Vector2i(1, 1)},
+	Furniture.WALL_U_WINDOW: {"build": "wall", "size": Vector2i(1, 1)},
+	Furniture.POST_G: {"build": "post", "size": Vector2i(1, 1)},
+	Furniture.POST_U: {"build": "post", "size": Vector2i(1, 1)},
+	Furniture.BAND: {"build": "band", "size": Vector2i(1, 1)},
+	Furniture.BAND_POST: {"build": "band", "size": Vector2i(1, 1)},
+	# Under a stair: a pair of posts, the top pair carrying the ledger the
+	# stringers rest on.
+	Furniture.STAIR_POST: {"build": "posts", "size": Vector2i(1, 1)},
+	Furniture.STAIR_POST_TOP: {"build": "posts", "size": Vector2i(1, 1)},
+}
+static var _furniture_mat: ShaderMaterial = null
+static var _glow_mat: ShaderMaterial = null
+
 ## Shapes other than the cube exist for a subset of tiles. An item id packs
 ## shape and tile (see item_id), so both are recoverable from any id.
 ##
@@ -28,9 +87,12 @@ enum Prop { WEEDS, FLOWERS_A, FLOWERS_B, STONES, PEBBLES }
 enum Shape { CUBE }  # every other shape number is a patch
 const PATCH_FIRST := 3  # patch shape numbers start here
 const MAX_CORNER := 8  # highest a piece's corner may sit above its cell floor, in quarter cubes
-const SHAPED_TILES: Array[int] = [Tile.GRASS, Tile.STONE, Tile.SAND, Tile.SNOW, Tile.GRAVEL, Tile.ROOF]
+const SHAPED_TILES: Array[int] = [Tile.GRASS, Tile.STONE, Tile.SAND, Tile.SNOW, Tile.GRAVEL, Tile.ROOF, Tile.PLANKS]
 ## Roofs step by half cubes, so they only need the shapes spanning one cube.
 const FLAT_STEP_TILES: Array[int] = [Tile.ROOF]
+## Planks only exist as stairs and landings: straight ramps and flat slabs
+## within one cube. The pathfinder treats plank pieces as floors.
+const STAIR_TILES: Array[int] = [Tile.PLANKS]
 ## Natural ground whose top faces blend into each other via the material map.
 const TERRAIN_TILES: Array[int] = [Tile.GRASS, Tile.DIRT, Tile.STONE, Tile.SAND, Tile.SNOW]
 
@@ -97,13 +159,51 @@ static func prop_id(prop: int) -> int:
 
 
 static func is_prop(id: int) -> bool:
-	return id >= PROP_BASE
+	return id >= PROP_BASE and id < FURNITURE_BASE
+
+
+static func furniture_id(kind: int) -> int:
+	return FURNITURE_BASE + kind
+
+
+static func is_furniture(id: int) -> bool:
+	return id >= FURNITURE_BASE
+
+
+## Ignored by movement: ground props, and furniture hung high on a wall.
+static func is_passable(id: int) -> bool:
+	if is_prop(id):
+		return true
+	if is_furniture(id) and id != FURNITURE_FILL:
+		var spec: Dictionary = FURNITURE_SPECS.get(id - FURNITURE_BASE, {})
+		return spec.get("passable", false)
+	return false
+
+
+## Cells a piece of furniture covers, relative to its anchor cell, rotated
+## k quarter turns like rotation_index(k).
+static func furniture_cells(kind: int, k: int) -> Array[Vector2i]:
+	var size: Vector2i = FURNITURE_SPECS[kind]["size"]
+	var basis := Basis(Vector3.UP, k * PI / 2.0)
+	var out: Array[Vector2i] = []
+	for j in size.y:
+		for i in size.x:
+			var v := basis * Vector3(i, 0, j)
+			out.append(Vector2i(roundi(v.x), roundi(v.z)))
+	return out
+
+
+## The direction a wall item's back faces after k quarter turns, so the
+## wall it hangs on is the neighbour in that direction.
+static func furniture_back(k: int) -> Vector2i:
+	var v := Basis(Vector3.UP, k * PI / 2.0) * Vector3(0, 0, -1)
+	return Vector2i(roundi(v.x), roundi(v.z))
 
 
 ## Height of the feet above the cell floor when standing in this shape: the
 ## mean of its corner heights.
 static func stand_offset(id: int) -> float:
-	if is_prop(id):
+	if is_prop(id) or is_furniture(id):
 		return 0.0
 	var shape := shape_of(id)
 	if shape < PATCH_FIRST:
@@ -312,6 +412,8 @@ static func build() -> MeshLibrary:
 		lib.set_item_mesh(id, props[prop])
 		lib.set_item_shapes(id, [])
 
+	_add_furniture(lib, atlas)
+
 	_ensure_patches()
 	for tile: int in SHAPED_TILES:
 		var faces: Array = FACES[tile]
@@ -321,10 +423,496 @@ static func build() -> MeshLibrary:
 			var q := _patches[i]
 			if tile in FLAT_STEP_TILES and maxi(maxi(q[0], q[1]), maxi(q[2], q[3])) - mini(mini(q[0], q[1]), mini(q[2], q[3])) > 4:
 				continue
+			if tile in STAIR_TILES and not (q[0] == q[1] and q[2] == q[3] and maxi(q[1], q[2]) <= 4):
+				continue
 			var corners := _corner_heights(PATCH_FIRST + i)
-			_add_item(lib, item_id(PATCH_FIRST + i, tile), "%s_P%d" % [tile_name, i],
-				_build_patch(corners, faces, mat), _patch_hull(corners))
+			var mesh: ArrayMesh
+			if tile == Tile.PLANKS and q == PackedInt32Array([0, 0, 4, 4]):
+				mesh = _build_stair()  # the house stair: a stepped wooden flight
+			else:
+				mesh = _build_patch(corners, faces, mat)
+			_add_item(lib, item_id(PATCH_FIRST + i, tile), "%s_P%d" % [tile_name, i], mesh, _patch_hull(corners))
 	return lib
+
+
+## Loads every furniture model, merges its parts into one mesh under the
+## tile shader (so the cutout and slice apply), and places it so its
+## footprint is centred on the anchor cell(s) with its base on the floor.
+static func _add_furniture(lib: MeshLibrary, atlas: Texture2D) -> void:
+	var mat: ShaderMaterial = null
+	var built: Array[int] = []
+	for kind: int in FURNITURE_SPECS:
+		var spec: Dictionary = FURNITURE_SPECS[kind]
+		if spec.has("build"):
+			built.append(kind)
+			continue
+		var path: String = "res://assets/kaykit_dungeon/%s.glb" % spec["file"]
+		var doc := GLTFDocument.new()
+		var state := GLTFState.new()
+		if doc.append_from_file(path, state) != OK:
+			push_error("furniture: cannot load " + path)
+			continue
+		var root := doc.generate_scene(state)
+		# Pass one: every part in model space, to measure it.
+		var raw := SurfaceTool.new()
+		raw.begin(Mesh.PRIMITIVE_TRIANGLES)
+		for mi: MeshInstance3D in root.find_children("*", "MeshInstance3D", true, false):
+			var xf := Transform3D.IDENTITY
+			var n: Node = mi
+			while n != null and n != root:
+				if n is Node3D:
+					xf = (n as Node3D).transform * xf
+				n = n.get_parent()
+			for si in mi.mesh.get_surface_count():
+				if mat == null:
+					var src := mi.mesh.surface_get_material(si) as BaseMaterial3D
+					mat = _make_material(src.albedo_texture if src != null and src.albedo_texture != null else atlas, "")
+				raw.append_from(mi.mesh, si, xf)
+		root.free()
+		var model := raw.commit()
+		var box := model.get_aabb()
+		# Pass two: scale and place in cell space (cell centre at the origin).
+		var s: float = spec.get("scale", FURNITURE_SCALE)
+		var size: Vector2i = spec["size"]
+		var centre := box.get_center()
+		var xf := Transform3D.IDENTITY
+		if spec.get("wall", false):
+			xf = Transform3D(Basis.from_scale(Vector3.ONE * s),
+				Vector3((size.x - 1) * 0.5 - centre.x * s, -0.5 + float(spec["y"]) * s, -0.5 - float(spec["mount"]) * s))
+		else:
+			xf = Transform3D(Basis.from_scale(Vector3.ONE * s),
+				Vector3((size.x - 1) * 0.5 - centre.x * s, -0.5 - box.position.y * s, (size.y - 1) * 0.5 - centre.z * s))
+		var st := SurfaceTool.new()
+		st.begin(Mesh.PRIMITIVE_TRIANGLES)
+		st.append_from(model, 0, xf)
+		st.set_material(mat)
+		var id := furniture_id(kind)
+		lib.create_item(id)
+		lib.set_item_name(id, "FURNITURE_" + Furniture.keys()[kind])
+		lib.set_item_mesh(id, st.commit())
+		lib.set_item_shapes(id, [])
+	_furniture_mat = mat
+	_glow_mat = _make_material(mat.get_shader_parameter("atlas"), "GLOW")
+	for kind in built:
+		var id := furniture_id(kind)
+		var mesh: ArrayMesh
+		match kind:
+			Furniture.FIREPLACE: mesh = _build_fireplace()
+			Furniture.COUNTER: mesh = _build_counter()
+			Furniture.WALL_G: mesh = _build_wall(true, false, false)
+			Furniture.WALL_G_WINDOW: mesh = _build_wall(true, true, false)
+			Furniture.WALL_G_DOOR: mesh = _build_wall(true, false, true)
+			Furniture.WALL_U: mesh = _build_wall(false, false, false)
+			Furniture.WALL_U_WINDOW: mesh = _build_wall(false, true, false)
+			Furniture.POST_G: mesh = _build_post(true)
+			Furniture.POST_U: mesh = _build_post(false)
+			Furniture.BAND: mesh = _build_band(false)
+			Furniture.BAND_POST: mesh = _build_band(true)
+			Furniture.STAIR_POST: mesh = _build_stair_posts(false)
+			Furniture.STAIR_POST_TOP: mesh = _build_stair_posts(true)
+		lib.create_item(id)
+		lib.set_item_name(id, "FURNITURE_" + Furniture.keys()[kind])
+		lib.set_item_mesh(id, mesh)
+		lib.set_item_shapes(id, [])
+	lib.create_item(FURNITURE_FILL)
+	lib.set_item_name(FURNITURE_FILL, "FURNITURE_FILL")
+	lib.set_item_mesh(FURNITURE_FILL, ArrayMesh.new())
+	lib.set_item_shapes(FURNITURE_FILL, [])
+
+
+# --- Pieces built in the pack's style ----------------------------------------
+# Low-poly boxes with small chamfers, every face on one flat swatch of the
+# gradient atlas (8 columns by 4 rows of vertical gradients, light at the
+# top), shaded a little darker toward the bottom of each piece like the
+# pack's own models. Cell space: floor at y = -0.5, wall behind at z = -0.5.
+
+## Atlas columns of the pack's palette (row 0 unless noted).
+enum Swatch { DARK, STONE, TAN, BLACK, WOOD, TAUPE, COPPER, BROWN }
+const FLAME_ORANGE := Vector2i(4, 2)
+const FLAME_YELLOW := Vector2i(7, 2)
+
+static func _swatch_uv(col: int, row: int, t: float) -> Vector2:
+	return Vector2((col + 0.5) / 8.0, (row + clampf(t, 0.05, 0.95)) / 4.0)
+
+
+## A box from a to b with chamfered edges, coloured from one swatch and
+## shaded from t0 at y_top down to t1 at y_bottom (the piece's overall range).
+static func _bevel_box(st: SurfaceTool, a: Vector3, b: Vector3, col: int, row: int, bevel: float, y_range: Vector2, t_range := Vector2(0.38, 0.72), xf := Transform3D.IDENTITY) -> void:
+	var lo := Vector3(minf(a.x, b.x), minf(a.y, b.y), minf(a.z, b.z))
+	var hi := Vector3(maxf(a.x, b.x), maxf(a.y, b.y), maxf(a.z, b.z))
+	var c := (lo + hi) * 0.5
+	var h := (hi - lo) * 0.5
+	var bv := minf(bevel, minf(h.x, minf(h.y, h.z)) * 0.9)
+	var uv_at := func(p: Vector3) -> Vector2:
+		var f := (y_range.y - p.y) / maxf(y_range.y - y_range.x, 0.001)
+		return _swatch_uv(col, row, lerpf(t_range.x, t_range.y, f))
+	# The three points near each corner, one per axis the corner pulls in.
+	var pt := func(sx: int, sy: int, sz: int, axis: int) -> Vector3:
+		var p := Vector3(sx * h.x, sy * h.y, sz * h.z)
+		if axis != 0: p.x = sx * (h.x - bv)
+		if axis != 1: p.y = sy * (h.y - bv)
+		if axis != 2: p.z = sz * (h.z - bv)
+		return c + p
+	var emit := func(raw: Array, n: Vector3) -> void:
+		var pts: Array[Vector3] = []
+		for p: Vector3 in raw:
+			pts.append(xf * p)
+		var uvs: Array[Vector2] = []
+		for p in pts:
+			uvs.append(uv_at.call(p))
+		var wn := (xf.basis * n).normalized()
+		if pts.size() == 4:
+			_quad(st, pts, uvs, wn)
+		else:
+			_tri(st, pts, uvs, wn)
+	var signs := [-1, 1]
+	# Faces.
+	for axis in 3:
+		for sgn in signs:
+			var n := Vector3.ZERO
+			n[axis] = sgn
+			var pts: Array[Vector3] = []
+			for u in signs:
+				for v in signs:
+					var s3 := [0, 0, 0]
+					s3[axis] = sgn
+					s3[(axis + 1) % 3] = u
+					s3[(axis + 2) % 3] = v
+					pts.append(pt.call(s3[0], s3[1], s3[2], axis))
+			emit.call([pts[0], pts[1], pts[3], pts[2]], n)
+	# Edges: between the faces of axes a1 and a2, running along the third.
+	for a1 in 3:
+		for a2 in range(a1 + 1, 3):
+			var a3 := 3 - a1 - a2
+			for s1 in signs:
+				for s2 in signs:
+					var n := Vector3.ZERO
+					n[a1] = s1
+					n[a2] = s2
+					n = n.normalized()
+					var pts: Array[Vector3] = []
+					for s3 in signs:
+						var sg := [0, 0, 0]
+						sg[a1] = s1
+						sg[a2] = s2
+						sg[a3] = s3
+						pts.append(pt.call(sg[0], sg[1], sg[2], a1))
+					for s3 in [1, -1]:
+						var sg := [0, 0, 0]
+						sg[a1] = s1
+						sg[a2] = s2
+						sg[a3] = s3
+						pts.append(pt.call(sg[0], sg[1], sg[2], a2))
+					emit.call(pts, n)
+	# Corners.
+	for sx in signs:
+		for sy in signs:
+			for sz in signs:
+				var n := Vector3(sx, sy, sz).normalized()
+				emit.call([pt.call(sx, sy, sz, 0), pt.call(sx, sy, sz, 1), pt.call(sx, sy, sz, 2)], n)
+
+
+## A four-sided flame: a pyramid on a square base, slightly twisted.
+static func _flame(st: SurfaceTool, base: Vector3, width: float, height: float, sw: Vector2i, twist: float) -> void:
+	var top := base + Vector3(0, height, 0)
+	var corners: Array[Vector3] = []
+	for i in 4:
+		var a := i * PI / 2.0 + twist
+		corners.append(base + Vector3(cos(a), 0, sin(a)) * width * 0.5)
+	for i in 4:
+		var p0 := corners[i]
+		var p1 := corners[(i + 1) % 4]
+		var n := (p1 - p0).cross(top - p0).normalized()
+		if n.dot(((p0 + p1) * 0.5) - base) < 0.0:
+			n = -n
+		_tri(st, [p0, p1, top], [_swatch_uv(sw.x, sw.y, 0.6), _swatch_uv(sw.x, sw.y, 0.6), _swatch_uv(sw.x, sw.y, 0.1)], n)
+
+
+## Two cells wide against the wall behind: stone surround, a dark firebox
+## with logs and glowing flames, a wooden mantel, and a chimney breast up to
+## the ceiling. The anchor cell is the left half.
+static func _build_fireplace() -> ArrayMesh:
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	st.set_material(_furniture_mat)
+	var yr := Vector2(-0.5, 2.5)
+	var S := Swatch.STONE
+	_bevel_box(st, Vector3(-0.48, -0.5, -0.5), Vector3(1.48, -0.38, 0.42), S, 0, 0.03, yr)   # hearth
+	_bevel_box(st, Vector3(-0.48, -0.5, -0.5), Vector3(1.48, 1.0, -0.28), S, 0, 0.03, yr)   # back
+	_bevel_box(st, Vector3(-0.48, -0.5, -0.5), Vector3(-0.08, 0.8, 0.25), S, 0, 0.04, yr)   # left jamb
+	_bevel_box(st, Vector3(1.08, -0.5, -0.5), Vector3(1.48, 0.8, 0.25), S, 0, 0.04, yr)     # right jamb
+	_bevel_box(st, Vector3(-0.5, 0.8, -0.5), Vector3(1.5, 1.0, 0.3), S, 0, 0.04, yr)        # lintel
+	_bevel_box(st, Vector3(-0.5, 1.0, -0.5), Vector3(1.5, 1.1, 0.4), Swatch.WOOD, 0, 0.02, yr)  # mantel shelf
+	_bevel_box(st, Vector3(0.05, 1.1, -0.5), Vector3(0.95, 2.5, 0.05), S, 0, 0.04, yr)     # chimney breast
+	# Firebox: dark inside, logs on the hearth.
+	_bevel_box(st, Vector3(-0.08, -0.38, -0.48), Vector3(1.08, 0.8, -0.3), Swatch.DARK, 0, 0.01, yr, Vector2(0.75, 0.95))
+	_bevel_box(st, Vector3(-0.08, -0.38, -0.48), Vector3(0.0, 0.8, 0.0), Swatch.DARK, 0, 0.01, yr, Vector2(0.75, 0.95))
+	_bevel_box(st, Vector3(1.0, -0.38, -0.48), Vector3(1.08, 0.8, 0.0), Swatch.DARK, 0, 0.01, yr, Vector2(0.75, 0.95))
+	_bevel_box(st, Vector3(0.1, -0.38, -0.2), Vector3(0.9, -0.24, -0.06), Swatch.BROWN, 0, 0.03, yr)  # log
+	_bevel_box(st, Vector3(0.15, -0.38, -0.02), Vector3(0.85, -0.24, 0.12), Swatch.BROWN, 0, 0.03, yr)  # log
+	_bevel_box(st, Vector3(0.3, -0.24, -0.14), Vector3(0.7, -0.1, 0.02), Swatch.BROWN, 0, 0.03, yr)  # log on top
+	var mesh := st.commit()
+	# Flames glow through their own material.
+	var fl := SurfaceTool.new()
+	fl.begin(Mesh.PRIMITIVE_TRIANGLES)
+	fl.set_material(_glow_mat)
+	_flame(fl, Vector3(0.5, -0.12, -0.06), 0.5, 0.55, FLAME_ORANGE, 0.3)
+	_flame(fl, Vector3(0.28, -0.14, -0.1), 0.3, 0.35, FLAME_ORANGE, 0.9)
+	_flame(fl, Vector3(0.72, -0.14, -0.02), 0.3, 0.3, FLAME_ORANGE, 0.1)
+	_flame(fl, Vector3(0.5, -0.1, -0.06), 0.28, 0.38, FLAME_YELLOW, 1.0)
+	return fl.commit(mesh)
+
+
+## A shop counter one cell long that tiles along x: a wooden top, a
+## panelled front toward +z and open shelves behind for the keeper.
+static func _build_counter() -> ArrayMesh:
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	st.set_material(_furniture_mat)
+	var yr := Vector2(-0.5, 0.25)
+	_bevel_box(st, Vector3(-0.5, 0.15, -0.38), Vector3(0.5, 0.25, 0.4), Swatch.WOOD, 0, 0.02, yr, Vector2(0.3, 0.45))  # top
+	_bevel_box(st, Vector3(-0.5, -0.5, 0.24), Vector3(0.5, 0.15, 0.34), Swatch.WOOD, 0, 0.02, yr)   # front
+	_bevel_box(st, Vector3(-0.36, -0.36, 0.33), Vector3(0.36, 0.02, 0.37), Swatch.TAN, 0, 0.015, yr)  # front panel
+	_bevel_box(st, Vector3(-0.5, -0.5, -0.36), Vector3(-0.44, 0.15, 0.3), Swatch.WOOD, 0, 0.015, yr)  # left end
+	_bevel_box(st, Vector3(0.44, -0.5, -0.36), Vector3(0.5, 0.15, 0.3), Swatch.WOOD, 0, 0.015, yr)   # right end
+	_bevel_box(st, Vector3(-0.5, -0.5, -0.36), Vector3(0.5, -0.42, 0.28), Swatch.WOOD, 0, 0.015, yr)  # bottom board
+	_bevel_box(st, Vector3(-0.5, -0.2, -0.36), Vector3(0.5, -0.14, 0.24), Swatch.WOOD, 0, 0.015, yr)   # shelf
+	return st.commit()
+
+
+# House walls. A panel is 0.3 thick along the inner edge of its cell
+# (z from -0.5 to -0.2), so wall-hung furniture in the room beyond meets
+# it; the outer 0.7 of the cell is open under the eaves.
+const WALL_Z0 := -0.5
+const WALL_Z1 := -0.2
+const PLASTER := Vector2i(0, 3)   # beige column of the atlas
+const GLASS := Vector2i(6, 2)
+
+
+static func _wall_beam(st: SurfaceTool, a: Vector3, b: Vector3, yr := Vector2(-0.5, 2.5)) -> void:
+	_bevel_box(st, a, b, Swatch.BROWN, 0, 0.02, yr)
+
+
+static func _wall_plaster(st: SurfaceTool, x0: float, y0: float, x1: float, y1: float, yr: Vector2) -> void:
+	if x1 - x0 < 0.01 or y1 - y0 < 0.01:
+		return
+	_bevel_box(st, Vector3(x0, y0, -0.44), Vector3(x1, y1, -0.26), PLASTER.x, PLASTER.y, 0.01, yr, Vector2(0.1, 0.35))
+
+
+## A straight panel three cubes tall: posts at both edges, a top plate, a
+## mid rail, plaster between. Ground panels start on a stone plinth; upper
+## ones on a timber sill. A window is a framed, mullioned glass opening; a
+## doorway a framed opening with a stone threshold.
+static func _build_wall(ground: bool, window: bool, door: bool) -> ArrayMesh:
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	st.set_material(_furniture_mat)
+	var yr := Vector2(-0.5, 2.5)
+	var base := 0.1 if ground else -0.36
+	if ground:
+		if door:
+			_bevel_box(st, Vector3(-0.5, -0.5, -0.5), Vector3(-0.3, 0.1, -0.1), Swatch.STONE, 0, 0.03, yr)
+			_bevel_box(st, Vector3(0.3, -0.5, -0.5), Vector3(0.5, 0.1, -0.1), Swatch.STONE, 0, 0.03, yr)
+			_bevel_box(st, Vector3(-0.3, -0.5, -0.5), Vector3(0.3, -0.42, -0.1), Swatch.STONE, 0, 0.02, yr)
+		else:
+			_bevel_box(st, Vector3(-0.5, -0.5, -0.5), Vector3(0.5, 0.1, -0.1), Swatch.STONE, 0, 0.03, yr)
+	else:
+		_wall_beam(st, Vector3(-0.5, -0.5, WALL_Z0), Vector3(0.5, -0.36, WALL_Z1))  # sill
+	var post_base := 0.1 if ground else -0.36
+	_wall_beam(st, Vector3(-0.5, post_base, WALL_Z0), Vector3(-0.38, 2.5, WALL_Z1))
+	_wall_beam(st, Vector3(0.38, post_base, WALL_Z0), Vector3(0.5, 2.5, WALL_Z1))
+	_wall_beam(st, Vector3(-0.38, 2.36, WALL_Z0), Vector3(0.38, 2.5, WALL_Z1))  # top plate
+	if door:
+		var top := 2.0 if ground else 2.0
+		_wall_beam(st, Vector3(-0.38, base, WALL_Z0), Vector3(-0.3, top, WALL_Z1))
+		_wall_beam(st, Vector3(0.3, base, WALL_Z0), Vector3(0.38, top, WALL_Z1))
+		_wall_beam(st, Vector3(-0.38, top, WALL_Z0), Vector3(0.38, top + 0.12, WALL_Z1))  # lintel
+		_wall_plaster(st, -0.38, top + 0.12, 0.38, 2.36, yr)
+	elif window:
+		var wx := 0.28
+		var wy0 := 0.95
+		var wy1 := 1.85
+		_wall_plaster(st, -0.38, base, 0.38, wy0, yr)
+		_wall_plaster(st, -0.38, wy1, 0.38, 2.36, yr)
+		_wall_plaster(st, -0.38, wy0, -wx, wy1, yr)
+		_wall_plaster(st, wx, wy0, 0.38, wy1, yr)
+		_wall_beam(st, Vector3(-wx - 0.06, wy0 - 0.08, -0.48), Vector3(wx + 0.06, wy0, -0.22))  # sill
+		_wall_beam(st, Vector3(-wx - 0.06, wy1, -0.48), Vector3(wx + 0.06, wy1 + 0.08, -0.22))  # head
+		_wall_beam(st, Vector3(-wx - 0.06, wy0, -0.46), Vector3(-wx, wy1, -0.24))
+		_wall_beam(st, Vector3(wx, wy0, -0.46), Vector3(wx + 0.06, wy1, -0.24))
+		_wall_beam(st, Vector3(-0.03, wy0, -0.4), Vector3(0.03, wy1, -0.3))  # mullion
+		_wall_beam(st, Vector3(-wx, 1.37, -0.4), Vector3(wx, 1.43, -0.3))  # transom
+		_bevel_box(st, Vector3(-wx, wy0, -0.36), Vector3(wx, wy1, -0.34), GLASS.x, GLASS.y, 0.0, yr, Vector2(0.2, 0.4))
+	else:
+		_wall_plaster(st, -0.38, base, 0.38, 1.15, yr)
+		_wall_beam(st, Vector3(-0.38, 1.15, WALL_Z0), Vector3(0.38, 1.27, WALL_Z1))  # mid rail
+		_wall_plaster(st, -0.38, 1.27, 0.38, 2.36, yr)
+	return st.commit()
+
+
+## A corner post filling the inner corner of a corner cell (the interior
+## is toward -x, -z before rotation), on a stone block downstairs.
+static func _build_post(ground: bool) -> ArrayMesh:
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	st.set_material(_furniture_mat)
+	var yr := Vector2(-0.5, 2.5)
+	var base := -0.5
+	if ground:
+		_bevel_box(st, Vector3(-0.5, -0.5, -0.5), Vector3(-0.1, 0.1, -0.1), Swatch.STONE, 0, 0.03, yr)
+		base = 0.1
+	_wall_beam(st, Vector3(-0.5, base, -0.5), Vector3(-0.2, 2.5, -0.2))
+	return st.commit()
+
+
+## The one-cube band at an upper floor's edge: sill, plate and plaster
+## between, or a post at a corner.
+static func _build_band(post: bool) -> ArrayMesh:
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	st.set_material(_furniture_mat)
+	var yr := Vector2(-0.5, 0.5)
+	if post:
+		_wall_beam(st, Vector3(-0.5, -0.5, -0.5), Vector3(-0.2, 0.5, -0.2))
+	else:
+		_wall_beam(st, Vector3(-0.5, -0.5, WALL_Z0), Vector3(0.5, -0.38, WALL_Z1))
+		_wall_beam(st, Vector3(-0.5, 0.38, WALL_Z0), Vector3(0.5, 0.5, WALL_Z1))
+		_wall_beam(st, Vector3(-0.5, -0.38, WALL_Z0), Vector3(-0.38, 0.38, WALL_Z1))
+		_wall_beam(st, Vector3(0.38, -0.38, WALL_Z0), Vector3(0.5, 0.38, WALL_Z1))
+		_wall_plaster(st, -0.38, -0.38, 0.38, 0.38, yr)
+	return st.commit()
+
+
+## A triangular prism between x0 and x1 whose section is the triangle
+## a, b, c in the y-z plane, coloured from one swatch.
+static func _tri_prism(st: SurfaceTool, a: Vector3, b: Vector3, c: Vector3, x0: float, x1: float, col: int, row: int, t: float) -> void:
+	var uv := _swatch_uv(col, row, t)
+	var near: Array[Vector3] = [Vector3(x0, a.y, a.z), Vector3(x0, b.y, b.z), Vector3(x0, c.y, c.z)]
+	var far: Array[Vector3] = [Vector3(x1, a.y, a.z), Vector3(x1, b.y, b.z), Vector3(x1, c.y, c.z)]
+	var uvs: Array[Vector2] = [uv, uv, uv]
+	_tri(st, near, uvs, Vector3.LEFT)
+	_tri(st, far, uvs, Vector3.RIGHT)
+	var centre := (a + b + c) / 3.0
+	for i in 3:
+		var pq := near[i]
+		var qq := near[(i + 1) % 3]
+		var n := Vector3(0, -(qq.z - pq.z), qq.y - pq.y).normalized()
+		var mid := (pq + qq) * 0.5
+		if n.dot(Vector3(0, mid.y - centre.y, mid.z - centre.z)) < 0.0:
+			n = -n
+		_quad(st, [pq, qq, far[(i + 1) % 3], far[i]], [uv, uv, uv, uv], n)
+
+
+const STRINGER_X := 0.32      # stringers set in from the cell edge so the treads overhang
+const STRINGER_T := 0.07      # plank thickness
+const STRINGER_W := 0.22      # plank width, measured across the slope
+const TREAD_T := 0.08
+
+
+## A prism extruded from a polygon in the x-z plane (star-shaped about
+## its centroid, listed in any consistent order) between y0 and y1, coloured
+## from one swatch with the top a shade lighter, then transformed by xf.
+static func _poly_prism(st: SurfaceTool, poly: PackedVector2Array, y0: float, y1: float, col: int, row: int, xf: Transform3D) -> void:
+	var top_uv := _swatch_uv(col, row, 0.3)
+	var side_uv := _swatch_uv(col, row, 0.55)
+	var bottom_uv := _swatch_uv(col, row, 0.75)
+	var centre := Vector2.ZERO
+	for q in poly:
+		centre += q
+	centre /= poly.size()
+	var n := poly.size()
+	for i in n:
+		var a := poly[i]
+		var b := poly[(i + 1) % n]
+		var top: Array[Vector3] = [xf * Vector3(centre.x, y1, centre.y), xf * Vector3(a.x, y1, a.y), xf * Vector3(b.x, y1, b.y)]
+		_tri(st, top, [top_uv, top_uv, top_uv], xf.basis * Vector3.UP)
+		var bottom: Array[Vector3] = [xf * Vector3(centre.x, y0, centre.y), xf * Vector3(a.x, y0, a.y), xf * Vector3(b.x, y0, b.y)]
+		_tri(st, bottom, [bottom_uv, bottom_uv, bottom_uv], xf.basis * Vector3.DOWN)
+		var edge := b - a
+		var out := Vector2(edge.y, -edge.x).normalized()
+		if out.dot((a + b) * 0.5 - centre) < 0.0:
+			out = -out
+		var side: Array[Vector3] = [xf * Vector3(a.x, y0, a.y), xf * Vector3(b.x, y0, b.y), xf * Vector3(b.x, y1, b.y), xf * Vector3(a.x, y1, a.y)]
+		_quad(st, side, [side_uv, side_uv, side_uv, side_uv], (xf.basis * Vector3(out.x, 0, out.y)).normalized())
+
+
+## A tread's outline: a plank with a chip out of a corner or a notch in
+## its front edge on some steps, so no two look alike.
+static func _tread_outline(i: int, x0: float, x1: float, z0: float, z1: float) -> PackedVector2Array:
+	var pts := PackedVector2Array()
+	var chip := 0.05
+	# Back edge left to right, then the front (z0, the nose) right to left.
+	pts.append(Vector2(x0, z1))
+	pts.append(Vector2(x1, z1))
+	if i % 2 == 1:
+		pts.append(Vector2(x1, z0 + chip))
+		pts.append(Vector2(x1 - chip, z0))
+	else:
+		pts.append(Vector2(x1, z0))
+	if i % 3 != 1:
+		var nx := x0 + 0.25 + 0.15 * i
+		pts.append(Vector2(nx + 0.04, z0))
+		pts.append(Vector2(nx, z0 + 0.035))
+		pts.append(Vector2(nx - 0.04, z0))
+	if i == 2:
+		pts.append(Vector2(x0 + chip, z0))
+		pts.append(Vector2(x0, z0 + chip))
+	else:
+		pts.append(Vector2(x0, z0))
+	return pts
+
+
+## One cell of an open wooden stair rising a cube toward +z, standing in
+## for the plank ramp piece: two wide planks set on edge at 45 degrees as
+## stringers, their upper edge cut in a sawtooth, with a tread nailed on
+## each horizontal cut and overhanging the stringers on both sides. The
+## stringers run on into the next cell's, and the top cell's rest against
+## the upper floor.
+static func _build_stair() -> ArrayMesh:
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	st.set_material(_furniture_mat)
+	var yr := Vector2(-0.6, 0.5)
+	var half := sqrt(2.0) * 0.5
+	for sx: float in [-1.0, 1.0]:
+		var x: float = sx * STRINGER_X
+		# The plank: its upper edge lies on y = z - TREAD_T.
+		var xf := Transform3D(Basis(Vector3.RIGHT, -PI / 4.0), Vector3(x, -TREAD_T, 0))
+		_bevel_box(st, Vector3(-STRINGER_T * 0.5, -STRINGER_W, -half), Vector3(STRINGER_T * 0.5, 0, half),
+			Swatch.BROWN, 0, 0.008, yr, Vector2(0.38, 0.72), xf)
+		# The teeth above it: a vertical cut then a horizontal one per step.
+		for i in 4:
+			var z0 := -0.5 + 0.25 * i
+			var top := z0 + 0.25 - TREAD_T
+			_tri_prism(st, Vector3(0, top, z0), Vector3(0, z0 - TREAD_T, z0), Vector3(0, top, z0 + 0.25),
+				x - STRINGER_T * 0.5, x + STRINGER_T * 0.5, Swatch.BROWN, 0, 0.5)
+	for i in 4:
+		var z0 := -0.5 + 0.25 * i
+		var top := z0 + 0.25
+		# Each tread sits a touch askew, as if nailed on by hand.
+		var yaw := float((i * 7) % 5 - 2) * 0.015
+		var shift := float((i * 3) % 3 - 1) * 0.012
+		var xf := Transform3D(Basis(Vector3.UP, yaw), Vector3(shift, 0, 0))
+		_poly_prism(st, _tread_outline(i, -0.48, 0.48, z0 - 0.03, z0 + 0.25), top - TREAD_T, top, Swatch.WOOD, 0, xf)
+	return st.commit()
+
+
+## A pair of posts under a stair cell's lower end. The top pair stops
+## under the stringers and carries a ledger between them.
+static func _build_stair_posts(top: bool) -> ArrayMesh:
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	st.set_material(_furniture_mat)
+	var yr := Vector2(-0.5, 0.5)
+	var z := -0.35
+	# Where the stringers' lower edge passes over the posts, in the cell above.
+	var post_top := 0.5 if not top else (z - TREAD_T - STRINGER_W * sqrt(2.0)) + 1.0
+	for sx: float in [-1.0, 1.0]:
+		var x: float = sx * STRINGER_X
+		_wall_beam(st, Vector3(x - 0.04, -0.5, z - 0.04), Vector3(x + 0.04, post_top, z + 0.04), yr)
+	if top:
+		_wall_beam(st, Vector3(-STRINGER_X - 0.04, post_top - 0.08, z - 0.05), Vector3(STRINGER_X + 0.04, post_top, z + 0.05), yr)
+	return st.commit()
 
 
 static func _add_item(lib: MeshLibrary, id: int, item_name: String, mesh: Mesh, hull: PackedVector3Array) -> void:

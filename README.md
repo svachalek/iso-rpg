@@ -64,9 +64,34 @@ same scale; there is no zoom-in view.
 - Hand-edit layer over the generator (scripts/world_edits.gd): column height
   overrides, per-column surface material overrides, and per-cell tile
   overrides, applied when a chunk is built
-- A first walled town (scripts/town_builder.gd) on the flattest site near the
-  origin: gravel streets, five timber houses with stone footings, doors,
-  windows and hip roofs; the character spawns at the south gate
+- A walled town (scripts/town_builder.gd) on the flattest site near the
+  origin: a main street with gates and two side lanes each way, thirty
+  timber houses with stone footings, doors, windows and hip roofs, ten of
+  them two storeys with a rustic open stair along the back wall: two wide
+  planks on edge at 45 degrees as stringers with sawtooth cuts, chunky
+  nicked treads nailed on and overhanging them, posts under the lower
+  steps, the top resting on the upper floor, and open floor at the foot
+  and a landing at the head; the character spawns at the south gate
+- Furniture from the CC0 KayKit Dungeon Remastered pack (assets/kaykit_dungeon,
+  loaded at runtime and scaled so a bed spans one by two cells): shops on the
+  main street get a counter of laden tables with stock behind it, homes a
+  dining table with seats, a kitchen counter, shelves and stores, bedrooms
+  beds, chests and a writing table, and every door a wall torch. Furniture
+  blocks movement (wall-hung pieces are walked under) and rooms are furnished
+  so the door and stairs stay reachable. Items use the tile shader, so the
+  cutout and slice hide them like cubes. Two pieces the pack lacks are built
+  in code in its style (chamfered boxes on the same gradient atlas): a
+  fireplace with glowing flames and a chimney breast, and a tiling shop
+  counter. House walls are built the same way: timber-frame panels a third
+  of a cube thick and three tall, flush with the inner edge of their cell,
+  with a stone plinth downstairs, corner posts, mullioned windows, an open
+  doorway and a band along each upper floor, under a hip roof whose eaves
+  overhang the panels by most of a cell
+- Pathfinding (scripts/pathfinder.gd) has one node per feet cell, so a column
+  inside a house has a ground node and an upstairs node. Above ground only
+  plank floors and plank stair pieces count as walkable, and floors connect
+  only through their stairs. A click goes to the floor nearest the surface it
+  hit, so a visible stair step is a valid target from either floor
 - Occlusion handling, all in shaders/tiles.gdshader and shaders/xray.gdshader:
   - cutout: while something is overhead, tiles between the camera and the
     character within a wide radius are dithered away, so the walls facing
@@ -95,11 +120,12 @@ Optional user args go after `--`:
     --noslice             start with the level slice off
     --blend=off           start with material blending off
     --nowalk              stand at spawn instead of walking
-    --walk=X,Z            walk to column X,Z, then screenshot if asked
+    --walk=X,Z[,Y]        walk to column X,Z (the floor nearest height Y); repeatable, screenshot after the last
     --zoom=N              with --walk: camera size for the screenshot
     --yaw=DEG             with --walk: camera yaw for the screenshot
     --at=X,Z              spawn at column X,Z (the first and last HUD cell coordinates) instead of the town gate
     --shapes              with --nowalk: lay out every shape and rotation by the gate
+    --furniture           with --nowalk: an empty town with every furniture kind in four rotations
     --selftest            walk a short path, print stats, quit
     --screenshot=PATH     same as selftest, then save a PNG of the final frame
 
@@ -130,7 +156,7 @@ with `class_name` so the class cache exists):
     scripts/town_builder.gd   Site search and town layout as edits
     scripts/road_builder.gd   Roads and bridges as edits
     scripts/chunk_manager.gd  Chunk streaming, world cell lookup
-    scripts/pathfinder.gd     Stand-cell rules and A* over columns
+    scripts/pathfinder.gd     Stand-cell rules and A* over feet cells, floors and stairs included
     scripts/player.gd         Walking figure
     scripts/camera_rig.gd     Isometric orthographic camera
     scripts/main.gd           Wiring, input, HUD, self-test, shader globals

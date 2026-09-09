@@ -43,7 +43,7 @@ func _ready() -> void:
 	gen = WorldGen.new(seed_value)
 	var lib := TileLibrary.build()
 	town = TownBuilder.new()
-	town.build(gen, TownBuilder.find_site(gen, Vector2i.ZERO))
+	town.build(gen, TownBuilder.find_site(gen, Vector2i.ZERO), not "--furniture" in OS.get_cmdline_user_args())
 	# A road out of every gate, heading off to a distant point.
 	var road_cells := 0
 	for start: Array in town.road_starts():
@@ -77,9 +77,12 @@ func _ready() -> void:
 			var x := int(parts[0])
 			var z := int(parts[1])
 			spawn = Vector3i(x, gen.height_at(x, z) + 1, z)
+	if "--furniture" in OS.get_cmdline_user_args():
+		_place_furniture_samples()
+		spawn = Vector3i(town.origin.x + 16, town.height + 1, town.origin.y + 28)
 	if "--shapes" in OS.get_cmdline_user_args():
 		_place_shape_samples()
-		spawn = Vector3i(town.origin.x + 18, town.height + 1, town.origin.y + 34)
+		spawn = Vector3i(town.origin.x + TownBuilder.STREET, town.height + 1, town.origin.y + TownBuilder.STREET)
 	chunks.update_center(Vector3(spawn.x, 0, spawn.z))
 	chunks.load_all_pending()
 	spawn = _nearest_standable(spawn)
@@ -179,14 +182,15 @@ func _process(delta: float) -> void:
 
 ## Something solid within a few cubes above the character's head, checking the
 ## surrounding columns too so canopy edges do not flicker.
+## Something solid is over the character's own column. Neighbouring columns
+## are not checked: eaves reach the street edge, and walking beside a house
+## should not open its roof.
 func _is_covered() -> bool:
 	var c := player.cell
-	for dz in range(-1, 2):
-		for dx in range(-1, 2):
-			for y in range(c.y + 2, c.y + 16):
-				var t := chunks.get_cell(Vector3i(c.x + dx, y, c.z + dz))
-				if t != GridMap.INVALID_CELL_ITEM and not TileLibrary.is_prop(t):
-					return true
+	for y in range(c.y + 2, c.y + 16):
+		var t := chunks.get_cell(Vector3i(c.x, y, c.z))
+		if t != GridMap.INVALID_CELL_ITEM and not TileLibrary.is_passable(t):
+			return true
 	return false
 
 
@@ -313,12 +317,16 @@ func _physics_process(_delta: float) -> void:
 			from = hit.position + dir * 0.05
 			continue
 		var solid := Vector3i(inside.floor())
-		_walk_to(solid.x, solid.z)
+		_walk_to(solid.x, solid.z, inside.y)
 		return
 
 
-func _walk_to(x: int, z: int) -> void:
-	var target: Variant = finder.stand_cell(x, z)
+## Walks to column (x, z), to the floor nearest height `y` when the column
+## has several (a house with an upstairs); by default the player's own.
+func _walk_to(x: int, z: int, y: float = NAN) -> void:
+	if is_nan(y):
+		y = finder.feet_height(player.cell)
+	var target: Variant = finder.stand_cell_near(x, z, y)
 	if target == null:
 		_status = "Can't stand there."
 		return
@@ -405,13 +413,32 @@ func _face_camera_through_nearest_tree() -> void:
 func _place_shape_samples() -> void:
 	var e := gen.edits
 	var g := TileLibrary.Tile.GRASS
-	var y := town.height + 1
-	var z := town.origin.y + 33
-	var x := town.origin.x + 4
+	# Floating above the roofs in rows across the town, every other row empty.
+	var y := town.height + 10
+	var z := town.origin.y + 1
+	var x := town.origin.x + 2
+	var per_row := TownBuilder.SIZE - 4
 	var n := TileLibrary.patch_count()
 	for i in n:
-		e.set_cell(Vector3i(x + i % 26, y, z - 2 * (i / 26)), TileLibrary.item_id(TileLibrary.PATCH_FIRST + i, g))
+		e.set_cell(Vector3i(x + i % per_row, y, z + 2 * (i / per_row)), TileLibrary.item_id(TileLibrary.PATCH_FIRST + i, g))
 	print("selftest: shape samples: %d patch shapes from x=%d z=%d" % [n, x, z])
+
+
+## Test aid: every furniture kind in its four rotations (backs to -z first,
+## left to right) in rows down an empty town.
+func _place_furniture_samples() -> void:
+	var e := gen.edits
+	var y := town.height + 1
+	var x0 := town.origin.x + 2
+	var z := town.origin.y + 2
+	for kind: int in TileLibrary.FURNITURE_SPECS:
+		for k in 4:
+			e.set_cell(Vector3i(x0 + k * 4, y, z), TileLibrary.furniture_id(kind), TileLibrary.rotation_index(k))
+		z += 3
+		if z > town.origin.y + TownBuilder.SIZE - 4:
+			z = town.origin.y + 2
+			x0 += 18
+	print("selftest: furniture samples from %s" % [Vector2i(town.origin.x + 2, town.origin.y + 2)])
 
 
 ## Simulates holding W for a while, then releasing, and reports whether the
@@ -449,16 +476,23 @@ func _run_selftest(shot: String) -> void:
 		await _key_test()
 	player.step_provider = Callable()  # keep stray keypresses out of the test
 	await get_tree().process_frame
+	var walks := 0
 	for a in args:
 		if a.begins_with("--walk="):
+			walks += 1
+	for a in args:
+		if a.begins_with("--walk="):
+			walks -= 1
 			var parts := a.trim_prefix("--walk=").split(",")
-			_walk_to(int(parts[0]), int(parts[1]))
+			_walk_to(int(parts[0]), int(parts[1]), float(parts[2]) if parts.size() > 2 else NAN)
 			print("selftest: ", _status)
 			var f := 0
 			while player.is_moving() and f < 4000:
 				await get_tree().process_frame
 				f += 1
 			print("selftest: at %s feet %.1f" % [player.cell, player.position.y])
+			if walks > 0:
+				continue  # more legs to walk; screenshot after the last
 			var yaw := 45.0
 			for b in args:
 				if b.begins_with("--yaw="):

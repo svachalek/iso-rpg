@@ -1,10 +1,13 @@
 class_name GridPathfinder
 extends RefCounted
 
-## Grid pathfinding over loaded chunks. One node per column at its stand
-## height; steps of one cube up or down are walkable, water and trees are not.
+## Grid pathfinding over loaded chunks. One node per feet cell: a column
+## has one at ground level and one more for each upper floor or stair step
+## above it. Steps of one cube up or down are walkable, water and trees are
+## not, so floors only connect through their stairs.
 
-const MAX_SPAN := 64
+const MAX_SPAN := 96
+const FLOOR_SCAN := 12  # cells above the surface cell searched for upper floors
 const MARGIN := 6
 
 var _cm: ChunkManager
@@ -22,13 +25,13 @@ func item(c: Vector3i) -> int:
 
 func is_solid(c: Vector3i) -> bool:
 	var t := item(c)
-	return t != GridMap.INVALID_CELL_ITEM and t != TileLibrary.Tile.WATER and not TileLibrary.is_prop(t)
+	return t != GridMap.INVALID_CELL_ITEM and t != TileLibrary.Tile.WATER and not TileLibrary.is_passable(t)
 
 
 ## Empty for movement: nothing there, or only a prop.
 func is_empty(c: Vector3i) -> bool:
 	var t := item(c)
-	return t == GridMap.INVALID_CELL_ITEM or TileLibrary.is_prop(t)
+	return t == GridMap.INVALID_CELL_ITEM or TileLibrary.is_passable(t)
 
 
 func is_partial(c: Vector3i) -> bool:
@@ -42,7 +45,7 @@ func is_partial(c: Vector3i) -> bool:
 func is_standable(c: Vector3i) -> bool:
 	var t := item(c)
 	var ok := false
-	if t == GridMap.INVALID_CELL_ITEM or TileLibrary.is_prop(t):
+	if t == GridMap.INVALID_CELL_ITEM or TileLibrary.is_passable(t):
 		ok = is_solid(c + Vector3i.DOWN) and is_empty(c + Vector3i.UP)
 	elif TileLibrary.is_partial(t):
 		ok = is_empty(c + Vector3i.UP) and is_empty(c + Vector3i.UP * 2)
@@ -60,14 +63,14 @@ const MAX_WADE := 0.5
 ## World height of the feet when standing in cell `c`.
 func feet_height(c: Vector3i) -> float:
 	var t := item(c)
-	if t == GridMap.INVALID_CELL_ITEM or TileLibrary.is_prop(t):
+	if t == GridMap.INVALID_CELL_ITEM or TileLibrary.is_passable(t):
 		return float(c.y)
 	return c.y + TileLibrary.stand_offset(t)
 
 
-## The feet cell for a column, or null if nothing can stand there: the
-## surface cell (a slope piece, or empty over the cube top), or a bridge
-## deck reached through water above it.
+## The ground-level feet cell for a column, or null if nothing can stand
+## there: the surface cell (a slope piece, or empty over the cube top), or a
+## bridge deck reached through water above it.
 func stand_cell(x: int, z: int) -> Variant:
 	var s := _cm.surface_cell(x, z)
 	if s < 0:
@@ -90,20 +93,69 @@ func stand_cell(x: int, z: int) -> Variant:
 	return null
 
 
+## Above ground level only floors count: an empty cell over a plank cube,
+## or a plank piece (a stair step). Walls and roofs are never walked on.
+func is_floor(c: Vector3i) -> bool:
+	var t := item(c)
+	if t == GridMap.INVALID_CELL_ITEM or TileLibrary.is_passable(t):
+		return item(c + Vector3i.DOWN) == TileLibrary.Tile.PLANKS
+	return TileLibrary.is_partial(t) and TileLibrary.tile_of(t) == TileLibrary.Tile.PLANKS
+
+
+## Every feet cell in a column, lowest first: the ground level, then each
+## upper floor or stair step above it.
+func stand_cells(x: int, z: int) -> Array[Vector3i]:
+	var out: Array[Vector3i] = []
+	var s := _cm.surface_cell(x, z)
+	if s < 0:
+		return out
+	var g: Variant = stand_cell(x, z)
+	if g != null:
+		out.append(g)
+	for y in range(s + 1, s + FLOOR_SCAN + 1):
+		var c := Vector3i(x, y, z)
+		if (out.is_empty() or c.y > out[-1].y) and is_floor(c) and is_standable(c):
+			out.append(c)
+	return out
+
+
+## The feet cell in a column nearest world height y, or null.
+func stand_cell_near(x: int, z: int, y: float) -> Variant:
+	var best: Variant = null
+	var best_d := INF
+	for c in stand_cells(x, z):
+		var d := absf(feet_height(c) - y)
+		if d < best_d:
+			best = c
+			best_d = d
+	return best
+
+
 func _can_step(a: Vector3i, b: Vector3i) -> bool:
 	return absf(feet_height(a) - feet_height(b)) <= 1.0
+
+
+## The feet cell in column (x, z) reachable in one step from `from`, or null.
+func _step_from(from: Vector3i, x: int, z: int) -> Variant:
+	var best: Variant = null
+	var best_d := 2.0
+	var fh := feet_height(from)
+	for c in stand_cells(x, z):
+		var d := absf(feet_height(c) - fh)
+		if d <= 1.0 and d < best_d:
+			best = c
+			best_d = d
+	return best
 
 
 ## The feet cell one grid step from `from` in direction (dx, dz), or null if
 ## that step is blocked. Diagonals may not cut corners.
 func step_target(from: Vector3i, dx: int, dz: int) -> Variant:
-	var n: Variant = stand_cell(from.x + dx, from.z + dz)
-	if n == null or not _can_step(from, n):
+	var n: Variant = _step_from(from, from.x + dx, from.z + dz)
+	if n == null:
 		return null
 	if dx != 0 and dz != 0:
-		var a: Variant = stand_cell(from.x + dx, from.z)
-		var b: Variant = stand_cell(from.x, from.z + dz)
-		if a == null or b == null or not _can_step(from, a) or not _can_step(from, b):
+		if _step_from(from, from.x + dx, from.z) == null or _step_from(from, from.x, from.z + dz) == null:
 			return null
 	return n
 
@@ -118,54 +170,54 @@ func find_path(start: Vector3i, goal: Vector3i) -> Array[Vector3i]:
 	var maxz := maxi(start.z, goal.z) + MARGIN
 	if maxx - minx > MAX_SPAN or maxz - minz > MAX_SPAN:
 		return out
-	var w := maxx - minx + 1
 
 	var astar := AStar3D.new()
-	var ids := {}  # Vector2i column -> id
-	var cells := {}  # Vector2i column -> Vector3i feet cell
+	var ids := {}  # Vector3i feet cell -> id
+	var cells: Array[Vector3i] = []  # id -> feet cell
+	var by_col := {}  # Vector2i column -> Array[Vector3i] feet cells
 	for z in range(minz, maxz + 1):
 		for x in range(minx, maxx + 1):
-			var c: Variant = stand_cell(x, z)
-			if c == null:
+			var cs := stand_cells(x, z)
+			if cs.is_empty():
 				continue
-			var col := Vector2i(x, z)
-			var id := (x - minx) + (z - minz) * w
-			astar.add_point(id, Vector3(c.x, feet_height(c), c.z))
-			ids[col] = id
-			cells[col] = c
+			by_col[Vector2i(x, z)] = cs
+			for c in cs:
+				ids[c] = cells.size()
+				astar.add_point(cells.size(), Vector3(c.x, feet_height(c), c.z))
+				cells.append(c)
 
-	for col: Vector2i in ids:
-		var c: Vector3i = cells[col]
-		for dz in range(-1, 2):
-			for dx in range(-1, 2):
-				if dx == 0 and dz == 0:
-					continue
-				var ncol := col + Vector2i(dx, dz)
-				if not cells.has(ncol):
-					continue
-				var n: Vector3i = cells[ncol]
-				if not _can_step(c, n):
-					continue
-				if dx != 0 and dz != 0:
-					# No cutting corners around blocked or steep cells.
-					if not _step_ok(c, col + Vector2i(dx, 0), cells):
+	for col: Vector2i in by_col:
+		for c: Vector3i in by_col[col]:
+			for dz in range(-1, 2):
+				for dx in range(-1, 2):
+					if dx == 0 and dz == 0:
 						continue
-					if not _step_ok(c, col + Vector2i(0, dz), cells):
+					var ncol := col + Vector2i(dx, dz)
+					if not by_col.has(ncol):
 						continue
-				astar.connect_points(ids[col], ids[ncol])
+					for n: Vector3i in by_col[ncol]:
+						if not _can_step(c, n):
+							continue
+						if dx != 0 and dz != 0:
+							# No cutting corners around blocked or steep cells.
+							if not _step_ok(c, col + Vector2i(dx, 0), by_col):
+								continue
+							if not _step_ok(c, col + Vector2i(0, dz), by_col):
+								continue
+						astar.connect_points(ids[c], ids[n])
 
-	var scol := Vector2i(start.x, start.z)
-	var gcol := Vector2i(goal.x, goal.z)
-	if not ids.has(scol) or not ids.has(gcol):
+	if not ids.has(start) or not ids.has(goal):
 		return out
-	var id_path := astar.get_id_path(ids[scol], ids[gcol])
+	var id_path := astar.get_id_path(ids[start], ids[goal])
 	for i in range(1, id_path.size()):
-		var pos := astar.get_point_position(id_path[i])
-		out.append(cells[Vector2i(roundi(pos.x), roundi(pos.z))])
+		out.append(cells[id_path[i]])
 	return out
 
 
-func _step_ok(from: Vector3i, col: Vector2i, cells: Dictionary) -> bool:
-	if not cells.has(col):
+func _step_ok(from: Vector3i, col: Vector2i, by_col: Dictionary) -> bool:
+	if not by_col.has(col):
 		return false
-	return _can_step(from, cells[col])
+	for c: Vector3i in by_col[col]:
+		if _can_step(from, c):
+			return true
+	return false
