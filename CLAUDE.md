@@ -20,8 +20,16 @@ covers what is easy to get wrong.
   Coordinates are the HUD's first and last values (x, z); `Y` picks the
   floor. `--walk` repeats; the screenshot follows the last one.
 - After adding a script with `class_name`, run `godot --headless --path . --import` once.
-- The town for seed 1337 sits at origin (-152, -104), height 12, so the
-  first house (a two-storey shop with a stair) is around `--at=-126,-58`.
+- The town for seed 1337 sits at origin (-152, -104), height 12. Houses
+  come from `TownBuilder.LAYOUTS` (text maps, door at the bottom) placed by
+  `HOUSES` (corner, layout, door direction); the first entry is the
+  two-storey shop-home at town cell (22, 22), door at world (-122, -78).
+  A world cell is town origin plus the town-local cell; a layout facing
+  along x is turned, so its rows run along x. To look inside, spawn on the
+  doorstep with `--at` and `--walk` to a floor cell of the room.
+- Rooms are the walkable cells between doorways: a partition must enclose
+  its room completely (a missing wall cell merges two rooms and their
+  furnishing), and a stair's middle steps do not connect rooms.
 
 ## GDScript strictness
 

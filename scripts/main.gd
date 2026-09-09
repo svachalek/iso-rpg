@@ -550,6 +550,18 @@ func _run_selftest(shot: String) -> void:
 		frames += 1
 	print("selftest: walked %d frames, now at %s, chunks %d, %d fps uncapped" % [
 		frames, player.cell, chunks.loaded_count(), Engine.get_frames_per_second()])
+	if in_town and shot.is_empty():
+		# Then up the first house's stair, which catches a stair the
+		# pathfinder cannot climb.
+		var up := town.demo_upper
+		_walk_to(up.x, up.z, up.y)
+		if not player.is_moving():
+			push_error("selftest: no path up the first house's stair to %s: %s" % [up, _status])
+		frames = 0
+		while player.is_moving() and frames < 2400:
+			await get_tree().process_frame
+			frames += 1
+		print("selftest: upstairs after %d frames at %s" % [frames, player.cell])
 	if not shot.is_empty():
 		if not in_town:
 			_face_camera_through_nearest_tree()

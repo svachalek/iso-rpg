@@ -27,7 +27,9 @@ const FURNITURE_FILL := FURNITURE_BASE + 99
 enum Furniture { BED, BED_FANCY, BED_MAT, CHAIR, STOOL, TABLE, TABLE_FOOD, TABLE_DRINK, TABLE_BIG, TABLE_BIG_SET,
 	SHELVES, SHELF, BARREL, BOX, CRATES, KEG, CHEST, TORCH, FIREPLACE, COUNTER,
 	WALL_G, WALL_G_WINDOW, WALL_G_DOOR, WALL_U, WALL_U_WINDOW, POST_G, POST_U, BAND, BAND_POST,
-	STAIR_POST, STAIR_POST_TOP }
+	STAIR_POST, STAIR_POST_TOP,
+	PART_POST, PART_END, PART_STRAIGHT, PART_CORNER, PART_T, PART_CROSS, PART_DOOR,
+	CHIMNEY, CHIMNEY_STACK, RAIL_SIDE, RAIL_PAIR, RAIL_CORNER, RAIL_U }
 const FURNITURE_SCALE := 2.0 / 3.0  # the pack's 4-unit walls become 3 cubes; a bed spans 1 by 2 cells
 ## file, scale, footprint cells (w along x, d along z), then for wall items:
 ## wall = true, mount plane z in model units (which lands on the wall face),
@@ -71,6 +73,30 @@ const FURNITURE_SPECS := {
 	# stringers rest on.
 	Furniture.STAIR_POST: {"build": "posts", "size": Vector2i(1, 1)},
 	Furniture.STAIR_POST_TOP: {"build": "posts", "size": Vector2i(1, 1)},
+	# Partitions between rooms: a post at the cell centre with a half-panel
+	# toward each neighbouring wall cell (see _build_partition; the town
+	# builder picks the piece from the neighbours). At rotation 0 the arms
+	# run +x (END), +x and -x (STRAIGHT, DOOR), +x and +z (CORNER), all but
+	# -z (T). The doorway is a framed opening, walked through.
+	Furniture.PART_POST: {"build": "partition", "size": Vector2i(1, 1)},
+	Furniture.PART_END: {"build": "partition", "size": Vector2i(1, 1)},
+	Furniture.PART_STRAIGHT: {"build": "partition", "size": Vector2i(1, 1)},
+	Furniture.PART_CORNER: {"build": "partition", "size": Vector2i(1, 1)},
+	Furniture.PART_T: {"build": "partition", "size": Vector2i(1, 1)},
+	Furniture.PART_CROSS: {"build": "partition", "size": Vector2i(1, 1)},
+	Furniture.PART_DOOR: {"build": "partition", "size": Vector2i(1, 1), "passable": true},
+	# A fireplace's chimney: the breast carried up through each storey above
+	# it (anchored like the fireplace, spilling into its second cell) and
+	# the stack that stands out of the roof.
+	Furniture.CHIMNEY: {"build": "chimney", "size": Vector2i(1, 1)},
+	Furniture.CHIMNEY_STACK: {"build": "stack", "size": Vector2i(1, 1)},
+	# Handrails in the cell over a stair's middle steps, along whichever
+	# edges have floor beyond them (arms as for partitions: +x; +x and -x;
+	# +x and +z; all but -z). Walked through by the head of whoever climbs.
+	Furniture.RAIL_SIDE: {"build": "rail", "size": Vector2i(1, 1), "passable": true},
+	Furniture.RAIL_PAIR: {"build": "rail", "size": Vector2i(1, 1), "passable": true},
+	Furniture.RAIL_CORNER: {"build": "rail", "size": Vector2i(1, 1), "passable": true},
+	Furniture.RAIL_U: {"build": "rail", "size": Vector2i(1, 1), "passable": true},
 }
 static var _furniture_mat: ShaderMaterial = null
 static var _glow_mat: ShaderMaterial = null
@@ -510,6 +536,19 @@ static func _add_furniture(lib: MeshLibrary, atlas: Texture2D) -> void:
 			Furniture.BAND_POST: mesh = _build_band(true)
 			Furniture.STAIR_POST: mesh = _build_stair_posts(false)
 			Furniture.STAIR_POST_TOP: mesh = _build_stair_posts(true)
+			Furniture.PART_POST: mesh = _build_partition(0, false)
+			Furniture.PART_END: mesh = _build_partition(1, false)
+			Furniture.PART_STRAIGHT: mesh = _build_partition(1 | 4, false)
+			Furniture.PART_CORNER: mesh = _build_partition(1 | 2, false)
+			Furniture.PART_T: mesh = _build_partition(1 | 2 | 4, false)
+			Furniture.PART_CROSS: mesh = _build_partition(15, false)
+			Furniture.PART_DOOR: mesh = _build_partition(1 | 4, true)
+			Furniture.CHIMNEY: mesh = _build_chimney()
+			Furniture.CHIMNEY_STACK: mesh = _build_chimney_stack()
+			Furniture.RAIL_SIDE: mesh = _build_rail(1)
+			Furniture.RAIL_PAIR: mesh = _build_rail(1 | 4)
+			Furniture.RAIL_CORNER: mesh = _build_rail(1 | 2)
+			Furniture.RAIL_U: mesh = _build_rail(1 | 2 | 4)
 		lib.create_item(id)
 		lib.set_item_name(id, "FURNITURE_" + Furniture.keys()[kind])
 		lib.set_item_mesh(id, mesh)
@@ -780,6 +819,106 @@ static func _build_band(post: bool) -> ArrayMesh:
 		_wall_beam(st, Vector3(-0.5, -0.38, WALL_Z0), Vector3(-0.38, 0.38, WALL_Z1))
 		_wall_beam(st, Vector3(0.38, -0.38, WALL_Z0), Vector3(0.5, 0.38, WALL_Z1))
 		_wall_plaster(st, -0.38, -0.38, 0.38, 0.38, yr)
+	return st.commit()
+
+
+# Partitions between rooms: a timber-framed panel a bit over a quarter of a
+# cube thick, centred in its cell (unlike the house walls, which hug their
+# cell's inner edge), with a post at the cell centre and a half-panel toward
+# each neighbouring wall. Arms are a bitmask over +x, +z, -x, -z; the arm
+# reaches the cell edge, where it meets the next post or a house wall's face.
+const PART_HALF := 0.14
+
+
+static func _part_plaster(st: SurfaceTool, a: Vector3, b: Vector3, xf: Transform3D) -> void:
+	_bevel_box(st, a, b, PLASTER.x, PLASTER.y, 0.01, Vector2(-0.5, 2.5), Vector2(0.1, 0.35), xf)
+
+
+static func _part_beam(st: SurfaceTool, a: Vector3, b: Vector3, xf: Transform3D) -> void:
+	_bevel_box(st, a, b, Swatch.BROWN, 0, 0.02, Vector2(-0.5, 2.5), Vector2(0.38, 0.72), xf)
+
+
+## One arm from the centre post to the +x edge of the cell: sole plate, top
+## plate, mid rail and plaster between, turned by `ang` about the centre.
+static func _partition_arm(st: SurfaceTool, ang: float) -> void:
+	var xf := Transform3D(Basis(Vector3.UP, ang), Vector3.ZERO)
+	var a := 0.1
+	var b := 0.5
+	var t := PART_HALF
+	_part_beam(st, Vector3(a, -0.5, -t), Vector3(b, -0.38, t), xf)   # sole plate
+	_part_beam(st, Vector3(a, 2.38, -t), Vector3(b, 2.5, t), xf)     # top plate
+	_part_beam(st, Vector3(a, 1.15, -t), Vector3(b, 1.27, t), xf)    # mid rail
+	_part_plaster(st, Vector3(a, -0.38, -0.09), Vector3(b, 1.15, 0.09), xf)
+	_part_plaster(st, Vector3(a, 1.27, -0.09), Vector3(b, 2.38, 0.09), xf)
+
+
+static func _build_partition(arms: int, door: bool) -> ArrayMesh:
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	st.set_material(_furniture_mat)
+	var id := Transform3D.IDENTITY
+	var t := PART_HALF
+	if door:
+		# A framed opening the width of the cell less the jambs, a lintel
+		# with plaster above it, under a top plate spanning the cell.
+		for sx: float in [-1.0, 1.0]:
+			_part_beam(st, Vector3(sx * 0.3, -0.5, -t), Vector3(sx * 0.5, 2.0, t), id)
+		_part_beam(st, Vector3(-0.5, 2.0, -t), Vector3(0.5, 2.12, t), id)   # lintel
+		_part_beam(st, Vector3(-0.5, 2.38, -t), Vector3(0.5, 2.5, t), id)   # top plate
+		_part_plaster(st, Vector3(-0.5, 2.12, -0.09), Vector3(0.5, 2.38, 0.09), id)
+		return st.commit()
+	_part_beam(st, Vector3(-0.12, -0.5, -0.12), Vector3(0.12, 2.5, 0.12), id)
+	for i in 4:
+		if arms & (1 << i):
+			_partition_arm(st, -i * PI / 2.0)
+	return st.commit()
+
+
+## The chimney breast above a fireplace, continuing the one on the
+## fireplace itself (x 0.05 to 0.95 across the seam of its two cells) up
+## through a storey, with a stone ledge where it meets the floor.
+static func _build_chimney() -> ArrayMesh:
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	st.set_material(_furniture_mat)
+	var yr := Vector2(-0.5, 2.5)
+	_bevel_box(st, Vector3(-0.02, -0.5, -0.5), Vector3(1.02, -0.3, 0.12), Swatch.STONE, 0, 0.03, yr)
+	_bevel_box(st, Vector3(0.05, -0.5, -0.5), Vector3(0.95, 2.5, 0.05), Swatch.STONE, 0, 0.04, yr)
+	return st.commit()
+
+
+## The stack out of the roof: a stone column buried a cube and a half into
+## the roof below its cell, a wider cap, and a dark flue on top.
+static func _build_chimney_stack() -> ArrayMesh:
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	st.set_material(_furniture_mat)
+	var yr := Vector2(-1.5, 0.9)
+	_bevel_box(st, Vector3(0.2, -1.5, -0.42), Vector3(0.8, 0.6, 0.0), Swatch.STONE, 0, 0.03, yr)
+	_bevel_box(st, Vector3(0.12, 0.6, -0.5), Vector3(0.88, 0.76, 0.08), Swatch.STONE, 0, 0.03, yr)
+	_bevel_box(st, Vector3(0.3, 0.76, -0.34), Vector3(0.7, 0.8, -0.08), Swatch.DARK, 0, 0.0, yr, Vector2(0.8, 0.95))
+	return st.commit()
+
+
+## A handrail along the +x edge of the cell, turned by `ang`: posts at the
+## corners, a top rail and a lower rail, standing on the floor beside the
+## cell (the top of this cell, since the cell is a hole over a stair).
+static func _rail_side(st: SurfaceTool, ang: float) -> void:
+	var xf := Transform3D(Basis(Vector3.UP, ang), Vector3.ZERO)
+	var yr := Vector2(0.5, 1.45)
+	for sz: float in [-1.0, 1.0]:
+		_bevel_box(st, Vector3(0.38, 0.5, sz * 0.46 - 0.04), Vector3(0.46, 1.45, sz * 0.46 + 0.04), Swatch.BROWN, 0, 0.015, yr, Vector2(0.38, 0.72), xf)
+	_bevel_box(st, Vector3(0.36, 1.35, -0.5), Vector3(0.48, 1.43, 0.5), Swatch.WOOD, 0, 0.02, yr, Vector2(0.3, 0.6), xf)
+	_bevel_box(st, Vector3(0.39, 0.92, -0.42), Vector3(0.45, 0.98, 0.42), Swatch.BROWN, 0, 0.01, yr, Vector2(0.38, 0.72), xf)
+
+
+static func _build_rail(sides: int) -> ArrayMesh:
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	st.set_material(_furniture_mat)
+	for i in 4:
+		if sides & (1 << i):
+			_rail_side(st, -i * PI / 2.0)
 	return st.commit()
 
 

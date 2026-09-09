@@ -65,26 +65,49 @@ same scale; there is no zoom-in view.
   overrides, per-column surface material overrides, and per-cell tile
   overrides, applied when a chunk is built
 - A walled town (scripts/town_builder.gd) on the flattest site near the
-  origin: a main street with gates and two side lanes each way, thirty
-  timber houses with stone footings, doors, windows and hip roofs, ten of
-  them two storeys with a rustic open stair along the back wall: two wide
-  planks on edge at 45 degrees as stringers with sawtooth cuts, chunky
-  nicked treads nailed on and overhanging them, posts under the lower
-  steps, the top resting on the upper floor, and open floor at the foot
-  and a landing at the head; the character spawns at the south gate
+  origin: a main street with gates and two side lanes each way, and thirty-two
+  timber buildings with stone footings, doors, windows and hip roofs, placed
+  from a list of preset layouts drawn as text maps (`LAYOUTS`): one-room
+  cottages in three sizes, middle homes with a living room and one or two
+  bedrooms behind a partition, a two-storey rich home with a kitchen, living
+  room and hall downstairs and three bedrooms up, a one-storey inn with a
+  tavern and two guest rooms, a two-storey inn with a kitchen, tavern and four
+  guest rooms off an upstairs corridor, simple shops with and without a
+  storeroom, and shop-homes in one storey (shop in front, living room and
+  bedroom behind) and two (shop below, living room and bedrooms above). Each
+  entry in `HOUSES` names a corner cell, a layout and the way its door faces;
+  the map is turned to suit. Rooms are divided by partitions a quarter cube
+  thick, centred in their cell, with doorways where the map says; two-storey
+  layouts mark their stair on the map, a rustic open run of four steps: two
+  wide planks on edge at 45 degrees as stringers with sawtooth cuts, chunky
+  nicked treads nailed on and overhanging them, posts under the lower steps,
+  the top resting on the upper floor, open floor at the foot and a landing
+  at the head, and handrails around the stairwell upstairs. Every fireplace
+  has a chimney: a stone breast carried up through the storeys above (taking
+  two cells of a roomy room there; a fireplace only goes where that is
+  possible) and a stack standing out of the roof; the character spawns at
+  the south gate
 - Furniture from the CC0 KayKit Dungeon Remastered pack (assets/kaykit_dungeon,
-  loaded at runtime and scaled so a bed spans one by two cells): shops on the
-  main street get a counter of laden tables with stock behind it, homes a
-  dining table with seats, a kitchen counter, shelves and stores, bedrooms
-  beds, chests and a writing table, and every door a wall torch. Furniture
-  blocks movement (wall-hung pieces are walked under) and rooms are furnished
-  so the door and stairs stay reachable. Items use the tile shader, so the
-  cutout and slice hide them like cubes. Two pieces the pack lacks are built
-  in code in its style (chamfered boxes on the same gradient atlas): a
-  fireplace with glowing flames and a chimney breast, and a tiling shop
-  counter. House walls are built the same way: timber-frame panels a third
-  of a cube thick and three tall, flush with the inner edge of their cell,
-  with a stone plinth downstairs, corner posts, mullioned windows, an open
+  loaded at runtime and scaled so a bed spans one by two cells), chosen by the
+  letter each room carries on its layout map: shops get a counter of laden
+  tables with stock behind it, living rooms a fireplace, a dining table with
+  seats and (without a kitchen next door) a kitchen counter with shelves and
+  stores, cottages a bed as well, kitchens a fire, a counter of three laden
+  tables and stores, bedrooms beds, chests and a writing table, guest rooms a
+  bed and a chest, taverns tables with stools, a bar of counters, kegs and a
+  fire, storerooms crates and barrels, halls a side table and a chest, and
+  every front door a wall torch. Furniture blocks movement (wall-hung pieces
+  are walked under) and rooms are furnished so every doorway and stair stays
+  reachable; wall-hung pieces only back onto house walls, and anything placed
+  "on a wall" stands with its back to one. Items use the tile shader, so the
+  cutout and slice hide them like cubes. Pieces the pack lacks are built in
+  code in its style (chamfered boxes on the same gradient atlas): a fireplace
+  with glowing flames and a chimney breast, a tiling shop counter, and the
+  partitions (a centre post with timber-framed plaster arms toward each
+  neighbouring wall, and a framed doorway). House walls are built the same
+  way: timber-frame panels a third of a cube thick and three tall, flush with
+  the inner edge of their cell, with a stone plinth downstairs, corner posts,
+  mullioned windows (skipped where a partition meets the wall), an open
   doorway and a band along each upper floor, under a hip roof whose eaves
   overhang the panels by most of a cell
 - Pathfinding (scripts/pathfinder.gd) has one node per feet cell, so a column
