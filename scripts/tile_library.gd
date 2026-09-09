@@ -24,12 +24,14 @@ enum Prop { WEEDS, FLOWERS_A, FLOWERS_B, STONES, PEBBLES }
 ## high enough to walk under.
 const FURNITURE_BASE := 61000
 const FURNITURE_FILL := FURNITURE_BASE + 99
+const FURNITURE_FILL_PASSABLE := FURNITURE_BASE + 98  # the other cells of a rug
 enum Furniture { BED, BED_FANCY, BED_MAT, CHAIR, STOOL, TABLE, TABLE_FOOD, TABLE_DRINK, TABLE_BIG, TABLE_BIG_SET,
 	SHELVES, SHELF, BARREL, BOX, CRATES, KEG, CHEST, TORCH, FIREPLACE, COUNTER,
 	WALL_G, WALL_G_WINDOW, WALL_G_DOOR, WALL_U, WALL_U_WINDOW, POST_G, POST_U, BAND, BAND_POST,
 	STAIR_POST, STAIR_POST_TOP,
 	PART_POST, PART_END, PART_STRAIGHT, PART_CORNER, PART_T, PART_CROSS, PART_DOOR,
-	CHIMNEY, CHIMNEY_STACK, RAIL_SIDE, RAIL_PAIR, RAIL_CORNER, RAIL_U }
+	CHIMNEY, CHIMNEY_STACK, RAIL_SIDE, RAIL_PAIR, RAIL_CORNER, RAIL_U,
+	RUG_SMALL, RUG_BIG }
 const FURNITURE_SCALE := 2.0 / 3.0  # the pack's 4-unit walls become 3 cubes; a bed spans 1 by 2 cells
 ## file, scale, footprint cells (w along x, d along z), then for wall items:
 ## wall = true, mount plane z in model units (which lands on the wall face),
@@ -38,7 +40,8 @@ const FURNITURE_SPECS := {
 	Furniture.BED: {"file": "bed_frame", "size": Vector2i(1, 2)},
 	Furniture.BED_FANCY: {"file": "bed_decorated", "size": Vector2i(2, 2)},
 	Furniture.BED_MAT: {"file": "bed_floor", "size": Vector2i(1, 2)},
-	Furniture.CHAIR: {"file": "chair", "size": Vector2i(1, 1)},
+	# The chair model's back is a quarter turn off the pack's usual -z.
+	Furniture.CHAIR: {"file": "chair", "size": Vector2i(1, 1), "turn": 1},
 	Furniture.STOOL: {"file": "stool", "size": Vector2i(1, 1)},
 	Furniture.TABLE: {"file": "table_small", "size": Vector2i(1, 1)},
 	Furniture.TABLE_FOOD: {"file": "table_small_decorated_A", "size": Vector2i(1, 1)},
@@ -97,6 +100,10 @@ const FURNITURE_SPECS := {
 	Furniture.RAIL_PAIR: {"build": "rail", "size": Vector2i(1, 1), "passable": true},
 	Furniture.RAIL_CORNER: {"build": "rail", "size": Vector2i(1, 1), "passable": true},
 	Furniture.RAIL_U: {"build": "rail", "size": Vector2i(1, 1), "passable": true},
+	# Rugs lie on the floor and are walked over; they may lie on the hearth
+	# cells kept clear in front of a fire.
+	Furniture.RUG_SMALL: {"build": "rug", "size": Vector2i(2, 1), "passable": true, "rug": true},
+	Furniture.RUG_BIG: {"build": "rug", "size": Vector2i(2, 2), "passable": true, "rug": true},
 }
 static var _furniture_mat: ShaderMaterial = null
 static var _glow_mat: ShaderMaterial = null
@@ -199,6 +206,8 @@ static func is_furniture(id: int) -> bool:
 ## Ignored by movement: ground props, and furniture hung high on a wall.
 static func is_passable(id: int) -> bool:
 	if is_prop(id):
+		return true
+	if id == FURNITURE_FILL_PASSABLE:
 		return true
 	if is_furniture(id) and id != FURNITURE_FILL:
 		var spec: Dictionary = FURNITURE_SPECS.get(id - FURNITURE_BASE, {})
@@ -549,6 +558,8 @@ static func _add_furniture(lib: MeshLibrary, atlas: Texture2D) -> void:
 			Furniture.RAIL_PAIR: mesh = _build_rail(1 | 4)
 			Furniture.RAIL_CORNER: mesh = _build_rail(1 | 2)
 			Furniture.RAIL_U: mesh = _build_rail(1 | 2 | 4)
+			Furniture.RUG_SMALL: mesh = _build_rug(2, 1)
+			Furniture.RUG_BIG: mesh = _build_rug(2, 2)
 		lib.create_item(id)
 		lib.set_item_name(id, "FURNITURE_" + Furniture.keys()[kind])
 		lib.set_item_mesh(id, mesh)
@@ -557,6 +568,10 @@ static func _add_furniture(lib: MeshLibrary, atlas: Texture2D) -> void:
 	lib.set_item_name(FURNITURE_FILL, "FURNITURE_FILL")
 	lib.set_item_mesh(FURNITURE_FILL, ArrayMesh.new())
 	lib.set_item_shapes(FURNITURE_FILL, [])
+	lib.create_item(FURNITURE_FILL_PASSABLE)
+	lib.set_item_name(FURNITURE_FILL_PASSABLE, "FURNITURE_FILL_PASSABLE")
+	lib.set_item_mesh(FURNITURE_FILL_PASSABLE, ArrayMesh.new())
+	lib.set_item_shapes(FURNITURE_FILL_PASSABLE, [])
 
 
 # --- Pieces built in the pack's style ----------------------------------------
@@ -919,6 +934,32 @@ static func _build_rail(sides: int) -> ArrayMesh:
 	for i in 4:
 		if sides & (1 << i):
 			_rail_side(st, -i * PI / 2.0)
+	return st.commit()
+
+
+## A woven rug w by d cells: a copper field with a taupe border and fringed
+## short ends, a few centimetres proud of the floor.
+static func _build_rug(w: int, d: int) -> ArrayMesh:
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	st.set_material(_furniture_mat)
+	var field := Vector2i(Swatch.COPPER, 0)
+	var edge := Vector2i(Swatch.TAUPE, 0)
+	var x0 := -0.42
+	var z0 := -0.44
+	var x1 := float(w) - 0.58
+	var z1 := float(d) - 0.56
+	var yr := Vector2(-0.5, -0.44)
+	_bevel_box(st, Vector3(x0, -0.5, z0), Vector3(x1, -0.47, z1), edge.x, edge.y, 0.005, yr, Vector2(0.4, 0.6))
+	_bevel_box(st, Vector3(x0 + 0.12, -0.5, z0 + 0.12), Vector3(x1 - 0.12, -0.465, z1 - 0.12), field.x, field.y, 0.005, yr, Vector2(0.5, 0.7))
+	_bevel_box(st, Vector3(x0 + 0.24, -0.5, z0 + 0.24), Vector3(x1 - 0.24, -0.46, z1 - 0.24), field.x, field.y, 0.005, yr, Vector2(0.65, 0.85))
+	# Fringe along the two short ends.
+	var n := int((z1 - z0) / 0.09)
+	for i in n:
+		var z := z0 + 0.03 + (z1 - z0 - 0.06) * float(i) / float(n - 1) - 0.015
+		for sx: float in [-1.0, 1.0]:
+			var xa := x0 - 0.06 if sx < 0.0 else x1
+			_bevel_box(st, Vector3(xa, -0.5, z), Vector3(xa + 0.06, -0.475, z + 0.03), Swatch.TAN, 0, 0.0, yr, Vector2(0.2, 0.4))
 	return st.commit()
 
 

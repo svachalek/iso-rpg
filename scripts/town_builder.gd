@@ -32,16 +32,18 @@ const STAIR_RUN := 4  # ramp cells between floors, each rising one cube
 ## partition stands in the middle of its cell.
 const LAYOUTS := {
 	"common_a": [[
-		"#######",
-		"#.....#",
-		"#.....#",
-		"#..C..#",
-		"#.....#",
-		"#.....#",
-		"###D###",
+		"########",
+		"#......#",
+		"#......#",
+		"#......#",
+		"#...C..#",
+		"#......#",
+		"#......#",
+		"####D###",
 	]],
 	"common_b": [[
 		"######",
+		"#....#",
 		"#....#",
 		"#....#",
 		"#..C.#",
@@ -50,14 +52,23 @@ const LAYOUTS := {
 		"##D###",
 	]],
 	"common_c": [[
-		"######",
-		"#....#",
-		"#....#",
-		"#....#",
-		"#..C.#",
-		"#....#",
-		"#....#",
-		"###D##",
+		"#######",
+		"#.....#",
+		"#.....#",
+		"#.....#",
+		"#..C..#",
+		"#.....#",
+		"#.....#",
+		"###D###",
+	]],
+	"common_d": [[
+		"#######",
+		"#.....#",
+		"#.....#",
+		"#..C..#",
+		"#.....#",
+		"#.....#",
+		"###D###",
 	]],
 	"middle_a": [[
 		"########",
@@ -161,6 +172,7 @@ const LAYOUTS := {
 		"#########",
 		"#L..#B..#",
 		"#...#...#",
+		"#...#...#",
 		"#...d...#",
 		"##d######",
 		"#.......#",
@@ -183,9 +195,9 @@ const LAYOUTS := {
 		"#.>>>>..#",
 		"#L......#",
 		"#.......#",
-		"#.......#",
 		"##d###d##",
 		"#B.#B...#",
+		"#..#....#",
 		"#..#....#",
 		"#########",
 	]],
@@ -199,40 +211,40 @@ const HOUSES: Array = [
 	# North-west block
 	[Vector2i(13, 13), "middle_a", Vector2i(0, -1)],
 	[Vector2i(24, 13), "shop_a", Vector2i(1, 0)],
-	[Vector2i(13, 24), "common_a", Vector2i(-1, 0)],
+	[Vector2i(13, 24), "common_d", Vector2i(-1, 0)],
 	# North-east block
 	[Vector2i(33, 13), "inn_b", Vector2i(-1, 0)],
-	[Vector2i(45, 13), "common_c", Vector2i(0, -1)],
+	[Vector2i(45, 13), "common_b", Vector2i(0, -1)],
 	[Vector2i(45, 23), "common_b", Vector2i(0, 1)],
 	[Vector2i(33, 25), "common_b", Vector2i(-1, 0)],
 	# South-west block
 	[Vector2i(13, 33), "common_c", Vector2i(-1, 0)],
 	[Vector2i(24, 33), "shop_a", Vector2i(1, 0)],
 	[Vector2i(22, 42), "inn_a", Vector2i(1, 0)],
-	[Vector2i(13, 43), "common_a", Vector2i(0, 1)],
+	[Vector2i(13, 43), "common_c", Vector2i(0, 1)],
 	# South-east block
 	[Vector2i(33, 33), "rich", Vector2i(-1, 0)],
 	[Vector2i(45, 33), "common_b", Vector2i(0, -1)],
-	[Vector2i(45, 42), "common_c", Vector2i(0, 1)],
+	[Vector2i(45, 43), "common_b", Vector2i(0, 1)],
 	[Vector2i(33, 45), "common_b", Vector2i(-1, 0)],
 	# West edge
-	[Vector2i(2, 14), "common_a", Vector2i(1, 0)],
+	[Vector2i(2, 13), "common_a", Vector2i(1, 0)],
 	[Vector2i(2, 23), "middle_a", Vector2i(1, 0)],
 	[Vector2i(2, 34), "common_b", Vector2i(1, 0)],
-	[Vector2i(2, 42), "shop_a", Vector2i(1, 0)],
+	[Vector2i(2, 42), "common_a", Vector2i(1, 0)],
 	# East edge
-	[Vector2i(55, 13), "common_a", Vector2i(-1, 0)],
+	[Vector2i(55, 13), "common_c", Vector2i(-1, 0)],
 	[Vector2i(54, 22), "middle_b", Vector2i(-1, 0)],
 	[Vector2i(55, 34), "common_a", Vector2i(-1, 0)],
-	[Vector2i(55, 43), "common_c", Vector2i(-1, 0)],
+	[Vector2i(55, 44), "common_c", Vector2i(-1, 0)],
 	# North edge
-	[Vector2i(13, 2), "common_a", Vector2i(0, 1)],
+	[Vector2i(13, 2), "common_c", Vector2i(0, 1)],
 	[Vector2i(22, 2), "middle_b", Vector2i(0, 1)],
 	[Vector2i(34, 2), "shop_b", Vector2i(-1, 0)],
-	[Vector2i(44, 2), "common_a", Vector2i(0, 1)],
+	[Vector2i(44, 2), "common_c", Vector2i(0, 1)],
 	# South edge
-	[Vector2i(14, 55), "common_b", Vector2i(0, -1)],
-	[Vector2i(22, 54), "shophome_a", Vector2i(1, 0)],
+	[Vector2i(13, 55), "common_b", Vector2i(0, -1)],
+	[Vector2i(21, 54), "shophome_a", Vector2i(1, 0)],
 	[Vector2i(34, 55), "shop_a", Vector2i(-1, 0)],
 	[Vector2i(44, 55), "common_c", Vector2i(0, -1)],
 ]
@@ -692,6 +704,7 @@ class Room:
 	var hi := Vector2i.ZERO
 	var entry := Vector2i.ZERO
 	var seed_hash := 0
+	var hearth := {}   # Vector2i -> true: kept clear in front of a fire; only a rug may lie here
 	var chimney := {}  # Vector2i -> true: cells a fireplace may occupy, if a storey is above
 	var chimney_needed := false
 	var fireplaces: Array[Vector3i] = []  # anchor x, anchor z, rotation of each placed
@@ -712,6 +725,15 @@ class Room:
 
 	func centre() -> Vector2:
 		return Vector2(lo + hi) * 0.5
+
+	## Share of the room's cells still walkable: floor for people to move
+	## and stand about on.
+	func floor_fraction() -> float:
+		var n := 0
+		for c: Vector2i in cells:
+			if walk.has(c):
+				n += 1
+		return float(n) / float(maxi(cells.size(), 1))
 
 	func size() -> Vector2i:
 		return hi - lo + Vector2i.ONE
@@ -950,28 +972,65 @@ func _rails(e: WorldEdits, lay: Layout, plan: Plan, s: int) -> void:
 
 
 func _furnish_living(e: WorldEdits, room: Room, with_bed: bool, with_kitchen: bool) -> void:
-	var big := room.size().x >= 4 and room.size().y >= 4
+	# Roomy enough for the big table with chairs all round.
+	var big := room.cells.size() >= 16 and mini(room.size().x, room.size().y) >= 3
 	_place(e, room, TileLibrary.Furniture.FIREPLACE, Spot.WALL)
 	if with_bed:
 		_place(e, room, TileLibrary.Furniture.BED, Spot.CORNER)
-	if big:
-		var t: Variant = _place(e, room, TileLibrary.Furniture.TABLE_BIG_SET, Spot.CENTRE)
-		if t != null:
-			_place_seats(e, room, t, TileLibrary.Furniture.TABLE_BIG_SET, TileLibrary.Furniture.CHAIR, 2)
-	else:
-		var t: Variant = _place(e, room, TileLibrary.Furniture.TABLE_FOOD, Spot.CENTRE)
-		if t != null:
-			_place_seats(e, room, t, TileLibrary.Furniture.TABLE_FOOD, TileLibrary.Furniture.STOOL, 2)
+	_place_dining(e, room, big)
 	if with_kitchen:
-		# Kitchen corner: a counter of laden tables along a wall with shelves above.
+		# Kitchen corner: a counter of laden tables along a wall with shelves
+		# above; a small room gets one table.
 		var k: Variant = _place(e, room, TileLibrary.Furniture.TABLE_DRINK, Spot.WALL)
-		if k != null:
+		if k != null and room.cells.size() >= 30:
 			_place_next_to(e, room, k, TileLibrary.Furniture.TABLE_FOOD)
 		_place(e, room, TileLibrary.Furniture.SHELVES, Spot.WALL)
-		_place(e, room, TileLibrary.Furniture.BARREL, Spot.CORNER)
+		_place_extra(e, room, TileLibrary.Furniture.BARREL, Spot.CORNER)
 	_place(e, room, TileLibrary.Furniture.SHELF, Spot.WALL)
 	if big:
-		_place(e, room, TileLibrary.Furniture.CHEST, Spot.CORNER)
+		_place_extra(e, room, TileLibrary.Furniture.CHEST, Spot.CORNER)
+	_place_rugs(e, room, big)
+
+
+## A dining table with seats all round and nothing else touching it: the
+## big set with four chairs where every cell around it is free, else a small
+## laden table with two stools, which also wants its four neighbours clear
+## but settles for what it can get.
+func _place_dining(e: WorldEdits, room: Room, big: bool) -> void:
+	if big:
+		var t: Variant = _place(e, room, TileLibrary.Furniture.TABLE_BIG_SET, Spot.CENTRE, Vector2i.ZERO, 8)
+		if t != null:
+			_place_seats(e, room, t, TileLibrary.Furniture.TABLE_BIG_SET, TileLibrary.Furniture.CHAIR, 4)
+			_keep_clear_around(room, t, TileLibrary.Furniture.TABLE_BIG_SET)
+			return
+	var t: Variant = _place(e, room, TileLibrary.Furniture.TABLE_FOOD, Spot.CENTRE, Vector2i.ZERO, 4)
+	if t == null:
+		t = _place(e, room, TileLibrary.Furniture.TABLE_FOOD, Spot.CENTRE, Vector2i.ZERO, 2)
+	if t == null:
+		t = _place(e, room, TileLibrary.Furniture.TABLE_FOOD, Spot.CENTRE)
+	if t != null:
+		_place_seats(e, room, t, TileLibrary.Furniture.TABLE_FOOD, TileLibrary.Furniture.STOOL, 2)
+		_keep_clear_around(room, t, TileLibrary.Furniture.TABLE_FOOD)
+
+
+## The free cells beside a placed piece stay open (walkable, but nothing
+## else is put there), so later items do not crowd it.
+static func _keep_clear_around(room: Room, placed: Vector3i, kind: int) -> void:
+	var anchor := Vector2i(placed.x, placed.y)
+	for o in TileLibrary.furniture_cells(kind, placed.z):
+		for d in DIRS:
+			room.free.erase(anchor + o + d)
+
+
+## Rugs, laid last over what floor is left: a small one on the hearth,
+## and in a nicer room a big one (or a small one) in the middle.
+func _place_rugs(e: WorldEdits, room: Room, nice: bool) -> void:
+	for f in room.fireplaces:
+		var back := TileLibrary.furniture_back(f.z)
+		_place_at(e, room, TileLibrary.Furniture.RUG_SMALL, f.z, Vector2i(f.x, f.y) - back)
+	if nice:
+		if _place(e, room, TileLibrary.Furniture.RUG_BIG, Spot.CENTRE) == null:
+			_place(e, room, TileLibrary.Furniture.RUG_SMALL, Spot.CENTRE)
 
 
 func _furnish_kitchen(e: WorldEdits, room: Room) -> void:
@@ -982,10 +1041,10 @@ func _furnish_kitchen(e: WorldEdits, room: Room) -> void:
 		if k2 != null:
 			_place_next_to(e, room, k2, TileLibrary.Furniture.TABLE_FOOD)
 	_place(e, room, TileLibrary.Furniture.SHELVES, Spot.WALL)
-	_place(e, room, TileLibrary.Furniture.BARREL, Spot.CORNER)
-	_place(e, room, TileLibrary.Furniture.KEG, Spot.CORNER)
+	_place_extra(e, room, TileLibrary.Furniture.BARREL, Spot.CORNER)
+	_place_extra(e, room, TileLibrary.Furniture.KEG, Spot.CORNER)
 	_place(e, room, TileLibrary.Furniture.SHELF, Spot.WALL)
-	_place(e, room, TileLibrary.Furniture.BOX, Spot.CORNER)
+	_place_extra(e, room, TileLibrary.Furniture.BOX, Spot.CORNER)
 
 
 func _furnish_shop(e: WorldEdits, room: Room, door: Vector2i, out: Vector2i) -> void:
@@ -1024,10 +1083,10 @@ func _furnish_shop(e: WorldEdits, room: Room, door: Vector2i, out: Vector2i) -> 
 	_place(e, room, TileLibrary.Furniture.FIREPLACE, Spot.WALL)
 	_place(e, room, TileLibrary.Furniture.TABLE_FOOD, Spot.WALL, -out)
 	_place(e, room, TileLibrary.Furniture.SHELVES, Spot.WALL, -out)
-	_place(e, room, TileLibrary.Furniture.CRATES, Spot.CORNER)
-	_place(e, room, TileLibrary.Furniture.KEG, Spot.CORNER)
-	_place(e, room, TileLibrary.Furniture.BARREL, Spot.CORNER)
-	_place(e, room, TileLibrary.Furniture.BOX, Spot.WALL)
+	_place_extra(e, room, TileLibrary.Furniture.CRATES, Spot.CORNER)
+	_place_extra(e, room, TileLibrary.Furniture.KEG, Spot.CORNER)
+	_place_extra(e, room, TileLibrary.Furniture.BARREL, Spot.CORNER)
+	_place_extra(e, room, TileLibrary.Furniture.BOX, Spot.WALL)
 	_place(e, room, TileLibrary.Furniture.SHELF, Spot.WALL)
 
 
@@ -1037,20 +1096,22 @@ func _furnish_bedroom(e: WorldEdits, room: Room) -> void:
 		_place(e, room, TileLibrary.Furniture.BED_FANCY, Spot.CORNER)
 	else:
 		_place(e, room, TileLibrary.Furniture.BED, Spot.CORNER)
-	_place(e, room, TileLibrary.Furniture.CHEST, Spot.CORNER)
-	if big:
+	if room.cells.size() >= 8:
+		var t: Variant = _place(e, room, TileLibrary.Furniture.TABLE, Spot.WALL)
+		if t != null:
+			_place_seats(e, room, t, TileLibrary.Furniture.TABLE, TileLibrary.Furniture.CHAIR, 1)
+	if room.cells.size() >= 20:
 		_place(e, room, TileLibrary.Furniture.BED, Spot.CORNER)
-	var t: Variant = _place(e, room, TileLibrary.Furniture.TABLE, Spot.WALL)
-	if t != null:
-		_place_seats(e, room, t, TileLibrary.Furniture.TABLE, TileLibrary.Furniture.CHAIR, 1)
+	_place_extra(e, room, TileLibrary.Furniture.CHEST, Spot.CORNER)
 	_place(e, room, TileLibrary.Furniture.SHELF, Spot.WALL)
-	_place(e, room, TileLibrary.Furniture.BOX, Spot.CORNER)
+	_place_extra(e, room, TileLibrary.Furniture.BOX, Spot.CORNER)
+	_place_rugs(e, room, big)
 
 
 ## An inn room: a bed, a chest, and a stool if there is space.
 func _furnish_guest(e: WorldEdits, room: Room) -> void:
 	_place(e, room, TileLibrary.Furniture.BED, Spot.CORNER)
-	_place(e, room, TileLibrary.Furniture.CHEST, Spot.CORNER)
+	_place_extra(e, room, TileLibrary.Furniture.CHEST, Spot.CORNER)
 	_place(e, room, TileLibrary.Furniture.SHELF, Spot.WALL)
 	if room.cells.size() >= 6:
 		_place(e, room, TileLibrary.Furniture.STOOL, Spot.WALL)
@@ -1064,34 +1125,43 @@ func _furnish_tavern(e: WorldEdits, room: Room) -> void:
 	var tables := clampi(room.cells.size() / 8, 1, 4)
 	for i in tables:
 		var kind: int = TileLibrary.Furniture.TABLE_DRINK if i % 2 == 0 else TileLibrary.Furniture.TABLE_FOOD
-		var t: Variant = _place(e, room, kind, Spot.ANYWHERE)
+		var t: Variant = _place(e, room, kind, Spot.ANYWHERE, Vector2i.ZERO, 3)
+		if t == null:
+			t = _place(e, room, kind, Spot.ANYWHERE, Vector2i.ZERO, 2)
 		if t != null:
-			_place_seats(e, room, t, kind, TileLibrary.Furniture.STOOL, 2)
+			_place_seats(e, room, t, kind, TileLibrary.Furniture.STOOL, 3)
 	var bar: Variant = _place(e, room, TileLibrary.Furniture.COUNTER, Spot.WALL)
 	if bar != null:
 		var b2: Variant = _place_next_to(e, room, bar, TileLibrary.Furniture.COUNTER)
 		if b2 != null:
 			_place_next_to(e, room, b2, TileLibrary.Furniture.COUNTER)
-	_place(e, room, TileLibrary.Furniture.KEG, Spot.CORNER)
-	_place(e, room, TileLibrary.Furniture.KEG, Spot.CORNER)
+	_place_extra(e, room, TileLibrary.Furniture.KEG, Spot.CORNER)
+	_place_extra(e, room, TileLibrary.Furniture.KEG, Spot.CORNER)
 	_place(e, room, TileLibrary.Furniture.SHELVES, Spot.WALL)
-	_place(e, room, TileLibrary.Furniture.BARREL, Spot.CORNER)
+	_place_extra(e, room, TileLibrary.Furniture.BARREL, Spot.CORNER)
+	_place_rugs(e, room, false)
 
 
 func _furnish_store(e: WorldEdits, room: Room) -> void:
-	_place(e, room, TileLibrary.Furniture.CRATES, Spot.CORNER)
+	_place_extra(e, room, TileLibrary.Furniture.CRATES, Spot.CORNER, 0.35)
 	_place(e, room, TileLibrary.Furniture.SHELVES, Spot.WALL)
-	_place(e, room, TileLibrary.Furniture.BARREL, Spot.CORNER)
-	_place(e, room, TileLibrary.Furniture.BARREL, Spot.CORNER)
-	_place(e, room, TileLibrary.Furniture.KEG, Spot.CORNER)
-	_place(e, room, TileLibrary.Furniture.BOX, Spot.WALL)
-	_place(e, room, TileLibrary.Furniture.BOX, Spot.CORNER)
+	_place_extra(e, room, TileLibrary.Furniture.BARREL, Spot.CORNER, 0.35)
+	_place_extra(e, room, TileLibrary.Furniture.BARREL, Spot.CORNER, 0.35)
+	_place_extra(e, room, TileLibrary.Furniture.KEG, Spot.CORNER, 0.35)
+	_place_extra(e, room, TileLibrary.Furniture.BOX, Spot.WALL, 0.35)
+	_place_extra(e, room, TileLibrary.Furniture.BOX, Spot.CORNER, 0.35)
 
 
+## A hall with room for it is the dining hall: the big table with four
+## chairs; otherwise a side table.
 func _furnish_hall(e: WorldEdits, room: Room) -> void:
-	_place(e, room, TileLibrary.Furniture.TABLE, Spot.WALL)
-	_place(e, room, TileLibrary.Furniture.CHEST, Spot.CORNER)
+	if room.cells.size() >= 18:
+		_place_dining(e, room, true)
+	else:
+		_place(e, room, TileLibrary.Furniture.TABLE, Spot.WALL)
+	_place_extra(e, room, TileLibrary.Furniture.CHEST, Spot.CORNER)
 	_place(e, room, TileLibrary.Furniture.SHELF, Spot.WALL)
+	_place_rugs(e, room, true)
 
 
 ## A torch beside the door downstairs, or on any wall upstairs.
@@ -1111,7 +1181,7 @@ func _place_torch(e: WorldEdits, room: Room, door: Vector2i, out: Vector2i, grou
 ## its back to some wall. `wall_dir`, if set, restricts those to walls facing
 ## that way (the back wall of a shop). Returns Vector3i(anchor x, anchor z,
 ## rotation) or null.
-func _place(e: WorldEdits, room: Room, kind: int, spot: int, wall_dir: Vector2i = Vector2i.ZERO) -> Variant:
+func _place(e: WorldEdits, room: Room, kind: int, spot: int, wall_dir: Vector2i = Vector2i.ZERO, around: int = 0) -> Variant:
 	var spec: Dictionary = TileLibrary.FURNITURE_SPECS[kind]
 	var wall_item: bool = spec.get("wall", false)
 	var best: Variant = null
@@ -1128,6 +1198,8 @@ func _place(e: WorldEdits, room: Room, kind: int, spot: int, wall_dir: Vector2i 
 					break
 				walls += room.walls_around(p)
 			if not ok:
+				continue
+			if around > 0 and _free_around(room, c, cells) < around:
 				continue
 			var back := TileLibrary.furniture_back(k)
 			if wall_item or spot == Spot.WALL:
@@ -1161,14 +1233,24 @@ func _place(e: WorldEdits, room: Room, kind: int, spot: int, wall_dir: Vector2i 
 	return _place_at(e, room, kind, best.z, Vector2i(best.x, best.y))
 
 
+## Stores and other extras that only go in while the room keeps at least
+## `keep` of its floor open, so there is room to move about (and for the
+## people who will live here).
+func _place_extra(e: WorldEdits, room: Room, kind: int, spot: int, keep: float = 0.6) -> Variant:
+	if room.floor_fraction() < keep:
+		return null
+	return _place(e, room, kind, spot)
+
+
 ## Places `kind` with rotation k anchored at `c` if its cells are free and
 ## the floor stays connected. Returns Vector3i(anchor x, anchor z, k) or null.
 func _place_at(e: WorldEdits, room: Room, kind: int, k: int, c: Vector2i) -> Variant:
 	var spec: Dictionary = TileLibrary.FURNITURE_SPECS[kind]
 	var passable: bool = spec.get("passable", false)
 	var cells := TileLibrary.furniture_cells(kind, k)
+	var rug: bool = spec.get("rug", false)
 	for o in cells:
-		if not room.free.has(c + o):
+		if not room.free.has(c + o) and not (rug and room.hearth.has(c + o)):
 			return null
 		if kind == TileLibrary.Furniture.FIREPLACE and room.chimney_needed and not room.chimney.has(c + o):
 			return null
@@ -1186,33 +1268,74 @@ func _place_at(e: WorldEdits, room: Room, kind: int, k: int, c: Vector2i) -> Var
 			return null
 	for o in cells:
 		room.free.erase(c + o)
+		room.hearth.erase(c + o)
 	if kind == TileLibrary.Furniture.FIREPLACE:
 		room.fireplaces.append(Vector3i(c.x, c.y, k))
+		# The cells before the fire stay clear to stand at it.
+		var back := TileLibrary.furniture_back(k)
+		for o in cells:
+			var front := c + o - back
+			if room.free.has(front):
+				room.free.erase(front)
+				room.hearth[front] = true
 	for i in cells.size():
 		var p := c + cells[i]
 		if i == 0:
-			e.set_cell(_w(p.x, room.y, p.y), TileLibrary.furniture_id(kind), TileLibrary.rotation_index(k))
+			# A model whose back is not at -z carries its own quarter turns.
+			var turn: int = spec.get("turn", 0)
+			e.set_cell(_w(p.x, room.y, p.y), TileLibrary.furniture_id(kind), TileLibrary.rotation_index(k + turn))
 		else:
-			e.set_cell(_w(p.x, room.y, p.y), TileLibrary.FURNITURE_FILL)
+			e.set_cell(_w(p.x, room.y, p.y), TileLibrary.FURNITURE_FILL_PASSABLE if passable else TileLibrary.FURNITURE_FILL)
 	return Vector3i(c.x, c.y, k)
 
 
-## Seats around a placed table, each with its back to the table.
-func _place_seats(e: WorldEdits, room: Room, table: Vector3i, tkind: int, kind: int, count: int) -> void:
-	var cells := TileLibrary.furniture_cells(tkind, table.z)
-	var occupied := {}
+## Free cells beside a footprint anchored at `c`, not counting its own.
+static func _free_around(room: Room, c: Vector2i, cells: Array[Vector2i]) -> int:
+	var own := {}
 	for o in cells:
-		occupied[Vector2i(table.x, table.y) + o] = true
-	var placed := 0
+		own[c + o] = true
+	var seen := {}
 	for o in cells:
 		for d in DIRS:
-			var c := Vector2i(table.x, table.y) + o + d
-			if occupied.has(c) or not room.free.has(c):
-				continue
-			if _place_at(e, room, kind, _facing(-d), c) != null:
-				placed += 1
-				if placed >= count:
-					return
+			var n := c + o + d
+			if not own.has(n) and room.free.has(n) and not seen.has(n):
+				seen[n] = true
+	return seen.size()
+
+
+## Seats around a placed table, each facing it: first one on each side,
+## nearest the table's middle, then the rest of the free cells beside it.
+func _place_seats(e: WorldEdits, room: Room, table: Vector3i, tkind: int, kind: int, count: int) -> void:
+	var cells := TileLibrary.furniture_cells(tkind, table.z)
+	var anchor := Vector2i(table.x, table.y)
+	var occupied := {}
+	var mid := Vector2.ZERO
+	for o in cells:
+		occupied[anchor + o] = true
+		mid += Vector2(anchor + o)
+	mid /= cells.size()
+	var by_side := {}  # direction -> candidate cells, nearest the middle first
+	for d in DIRS:
+		var side: Array[Vector2i] = []
+		for o in cells:
+			var c := anchor + o + d
+			if not occupied.has(c) and room.free.has(c) and not side.has(c):
+				side.append(c)
+		side.sort_custom(func(a: Vector2i, b: Vector2i) -> bool:
+			return Vector2(a).distance_squared_to(mid) < Vector2(b).distance_squared_to(mid))
+		by_side[d] = side
+	var placed := 0
+	for round in 2:
+		for d: Vector2i in DIRS:
+			var side: Array = by_side[d]
+			var take: Array = [side[0]] if round == 0 and not side.is_empty() else side.slice(1)
+			for c: Vector2i in take:
+				if placed >= count or not room.free.has(c):
+					continue
+				# The seat's back is away from the table, so it faces it.
+				if _place_at(e, room, kind, _facing(d), c) != null:
+					placed += 1
+	return
 
 
 ## A second one-cell item beside an item, continuing along the same wall.

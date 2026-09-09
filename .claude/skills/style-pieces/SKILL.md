@@ -33,6 +33,10 @@ Shades the pack uses, and that look right next to it:
 - Wall pieces and wall-hung furniture: the wall is behind the cell at
   z = -0.5; "back" is -z before rotation. House wall panels occupy
   z in [-0.5, -0.2] (`WALL_Z0`, `WALL_Z1`), flush with the room side.
+- A pack model whose back is not at -z takes `"turn": n` (quarter turns)
+  in its spec; the chair's backrest is on its +x side, so it has `"turn": 1`.
+  Measure with a headless script over the GLB's vertices rather than by eye:
+  screenshots at the isometric pitch are a poor judge of facing.
 - Multi-cell footprints anchor on one cell and extend toward +x and +z;
   `furniture_cells(kind, k)` rotates the footprint, `furniture_back(k)` the
   back direction. Meshes may spill outside their cell (stringers, chimney).

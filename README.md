@@ -68,7 +68,7 @@ same scale; there is no zoom-in view.
   origin: a main street with gates and two side lanes each way, and thirty-two
   timber buildings with stone footings, doors, windows and hip roofs, placed
   from a list of preset layouts drawn as text maps (`LAYOUTS`): one-room
-  cottages in three sizes, middle homes with a living room and one or two
+  cottages in four sizes, middle homes with a living room and one or two
   bedrooms behind a partition, a two-storey rich home with a kitchen, living
   room and hall downstairs and three bedrooms up, a one-storey inn with a
   tavern and two guest rooms, a two-storey inn with a kitchen, tavern and four
@@ -96,10 +96,18 @@ same scale; there is no zoom-in view.
   tables and stores, bedrooms beds, chests and a writing table, guest rooms a
   bed and a chest, taverns tables with stools, a bar of counters, kegs and a
   fire, storerooms crates and barrels, halls a side table and a chest, and
-  every front door a wall torch. Furniture blocks movement (wall-hung pieces
-  are walked under) and rooms are furnished so every doorway and stair stays
-  reachable; wall-hung pieces only back onto house walls, and anything placed
-  "on a wall" stands with its back to one. Items use the tile shader, so the
+  every front door a wall torch. Seats face their tables, one on each side
+  before any side gets a second; a big table only goes where four chairs
+  fit, and a hall with room for it becomes the dining hall. The cells before
+  a fire stay clear, and stores (barrels, boxes, kegs, crates, chests) only
+  go in while at least sixty percent of a room's floor stays walkable, so
+  there is room to move about. Rugs built in code (a copper field, taupe border
+  and fringe, two by one and two by two) are laid last: a small one on every
+  hearth, and one in the middle of the nicer rooms. Furniture blocks
+  movement (wall-hung pieces and rugs are walked over) and rooms are
+  furnished so every doorway and stair stays reachable; wall-hung pieces
+  only back onto house walls, and anything placed "on a wall" stands with
+  its back to one. Items use the tile shader, so the
   cutout and slice hide them like cubes. Pieces the pack lacks are built in
   code in its style (chamfered boxes on the same gradient atlas): a fireplace
   with glowing flames and a chimney breast, a tiling shop counter, and the
