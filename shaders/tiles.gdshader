@@ -17,7 +17,8 @@ uniform sampler2D atlas : source_color, filter_nearest_mipmap, repeat_disable;
 uniform float cutout_exempt = 0.0;   // 1 for furniture and trees, which occluder cuts leave alone
 // 1 for wall pieces. Their vertex tangent carries the wall's facing axis
 // in mesh space (y for a post, which faces every way), turned with the
-// instance like a normal.
+// instance like a normal. 2 for pieces hung on a wall, whose tangent
+// points from the wall into the room: they go by the wall cell behind them.
 uniform float knockdown = 0.0;
 uniform float terrain_blend = 0.0;   // 1 for natural ground tiles: blend materials across cells
 
@@ -179,19 +180,22 @@ void fragment() {
 
 	// Knock-down. A wall piece is in front of the character when its cell
 	// lies on the camera's side of theirs along the axis the wall faces, or
-	// in their own row (the wall they stand in the doorway of); a post
-	// counts on either axis.
+	// in their own row (the wall they stand in the doorway of). A post
+	// where walls meet belongs to both, and stays while either stands.
 	if (knockdown > 0.5 && cutout_enabled > 0.0) {
 		vec3 facing = (INV_VIEW_MATRIX * vec4(TANGENT, 0.0)).xyz;
-		vec2 relcell = cellxz - floor(player_pos.xz);
+		vec2 wallcell = knockdown > 1.5 ? cellxz - round(facing.xz) : cellxz;
+		vec2 relcell = wallcell - floor(player_pos.xz);
 		vec2 camside = -cam_forward.xz;
+		bool on_x = relcell.x * camside.x >= 0.0;
+		bool on_z = relcell.y * camside.y >= 0.0;
 		bool front;
 		if (abs(facing.y) > 0.5) {
-			front = relcell.x * camside.x > 0.0 || relcell.y * camside.y > 0.0;
+			front = on_x && on_z;
 		} else if (abs(facing.x) > abs(facing.z)) {
-			front = relcell.x * camside.x >= 0.0;
+			front = on_x;
 		} else {
-			front = relcell.y * camside.y >= 0.0;
+			front = on_z;
 		}
 		// The character's own building, whole; under other cover (a tree,
 		// a bridge) whatever wall pieces are within reach.

@@ -107,6 +107,7 @@ const FURNITURE_SPECS := {
 }
 static var _furniture_mat: ShaderMaterial = null
 static var _wall_mat: ShaderMaterial = null   # wall pieces: knocked down to waist height in front of the character
+static var _hung_mat: ShaderMaterial = null   # wall-hung pieces: as the wall behind their cell
 static var _structure_mat: ShaderMaterial = null   # stairs: cut with an occluding building, never knocked down
 static var _glow_mat: ShaderMaterial = null
 ## While a wall piece is built: the way its panels face in mesh space,
@@ -485,6 +486,8 @@ static func _make_furniture_mats(tex: Texture2D) -> void:
 	_furniture_mat.set_shader_parameter("cutout_exempt", 1.0)
 	_wall_mat = _furniture_mat.duplicate()
 	_wall_mat.set_shader_parameter("knockdown", 1.0)
+	_hung_mat = _furniture_mat.duplicate()
+	_hung_mat.set_shader_parameter("knockdown", 2.0)
 	_structure_mat = _furniture_mat.duplicate()
 	_structure_mat.set_shader_parameter("cutout_exempt", 0.0)
 	_glow_mat = _make_material(tex, "GLOW")
@@ -549,7 +552,7 @@ static func _add_furniture(lib: MeshLibrary, atlas: Texture2D) -> void:
 				st.set_normal(norms[i])
 				st.set_uv(uvs[i])
 				st.add_vertex(xf * verts[i])
-			st.set_material(_wall_mat)
+			st.set_material(_hung_mat)
 		else:
 			st.append_from(model, 0, xf)
 			st.set_material(_furniture_mat)
