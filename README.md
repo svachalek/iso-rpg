@@ -141,6 +141,7 @@ Optional user args go after `--`:
     --seed=N              world seed (default 1337)
     --nocutout            start with the cutout off
     --noslice             start with the level slice off
+    --nozoom              start with the auto zoom off (--zoom= implies it)
     --blend=off           start with material blending off
     --nowalk              stand at spawn instead of walking
     --walk=X,Z[,Y]        walk to column X,Z (the floor nearest height Y); repeatable, screenshot after the last
@@ -165,7 +166,8 @@ with `class_name` so the class cache exists):
 | W A S D or arrows | walk along the grid axes: W is up-right on screen, D down-right, S down-left, A up-left; two keys for a diagonal; hold to keep walking |
 | Left click | walk to the clicked column; clicks pass through sliced roofs and cutouts |
 | Q / E | rotate camera 90 degrees |
-| Mouse wheel | zoom |
+| Mouse wheel | zoom, on top of the auto zoom |
+| Z | toggle the auto zoom: the camera closes in by 1.4x inside the town wall and 2x indoors, easing over 0.4 s |
 | C | toggle the cutout (active only when something is overhead) |
 | V | toggle the level slice (active only when something is overhead) |
 | B | toggle material blending between grass, sand, stone and snow |

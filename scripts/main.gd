@@ -17,10 +17,16 @@ const CUTOUT_RADIUS := 6.0  # screen-plane radius that clears the walls facing t
 
 ## Both occlusion aids act only while something is overhead (indoors, under
 ## a canopy); the keys just switch them off for comparison.
-var _status := "WASD/arrows or click: walk   Q/E: rotate   Wheel: zoom   C: cutout   V: slice   B: blend   Esc: quit"
+var _status := "WASD/arrows or click: walk   Q/E: rotate   Wheel: zoom   Z: auto zoom   C: cutout   V: slice   B: blend   Esc: quit"
 var _blend_on := true
 var town: TownBuilder
 var _cutout_on := true
+## Auto zoom: the camera closes in inside the town wall and further indoors,
+## standing for the shorter field of view; the wheel scales on top of it.
+const ZOOM_OUTDOORS := 22.0
+const ZOOM_TOWN := 16.0
+const ZOOM_INDOORS := 11.0
+var _auto_zoom_on := true
 var _cutout_strength := 0.0
 var _slice_on := true
 var _slice_strength := 0.0
@@ -36,6 +42,8 @@ func _ready() -> void:
 			_cutout_on = false
 		elif a == "--noslice":
 			_slice_on = false
+		elif a == "--nozoom" or a.begins_with("--zoom="):
+			_auto_zoom_on = false
 		elif a == "--blend=off":
 			_blend_on = false
 
@@ -174,10 +182,26 @@ func _process(delta: float) -> void:
 	_covered = _is_covered()
 	_update_occlusion(delta)
 	_update_shader_globals()
-	hud.text = "%s\nFPS %d   cell %s   chunks %d loaded, %d pending   cutout %s   slice %s   blend %s" % [
+	if _auto_zoom_on:
+		rig.context_zoom = _context_zoom()
+	hud.text = "%s\nFPS %d   cell %s   chunks %d loaded, %d pending   zoom %s   cutout %s   slice %s   blend %s" % [
 		_status, Engine.get_frames_per_second(), player.cell,
 		chunks.loaded_count(), chunks.pending_count(),
+		"auto" if _auto_zoom_on else "manual",
 		"on" if _cutout_on else "off", "on" if _slice_on else "off", "on" if _blend_on else "off"]
+
+
+## The camera size the surroundings call for: closest indoors (something
+## overhead), closer inside the town wall than in the open.
+func _context_zoom() -> float:
+	if _covered:
+		return ZOOM_INDOORS
+	var c := player.cell
+	var lo := town.origin - Vector2i.ONE
+	var hi := town.origin + Vector2i(TownBuilder.SIZE, TownBuilder.SIZE)
+	if c.x >= lo.x and c.x <= hi.x and c.z >= lo.y and c.z <= hi.y:
+		return ZOOM_TOWN
+	return ZOOM_OUTDOORS
 
 
 ## Something solid within a few cubes above the character's head, checking the
@@ -287,6 +311,10 @@ func _unhandled_input(event: InputEvent) -> void:
 				rig.rotate_step(-1)
 			KEY_E:
 				rig.rotate_step(1)
+			KEY_Z:
+				_auto_zoom_on = not _auto_zoom_on
+				if not _auto_zoom_on:
+					rig.context_zoom = ZOOM_OUTDOORS
 			KEY_C:
 				_cutout_on = not _cutout_on
 			KEY_V:
