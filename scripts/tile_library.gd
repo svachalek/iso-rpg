@@ -106,7 +106,12 @@ const FURNITURE_SPECS := {
 	Furniture.RUG_BIG: {"build": "rug", "size": Vector2i(2, 2), "passable": true, "rug": true},
 }
 static var _furniture_mat: ShaderMaterial = null
+static var _wall_mat: ShaderMaterial = null   # wall pieces: knocked down to waist height in front of the character
+static var _structure_mat: ShaderMaterial = null   # stairs: cut with an occluding building, never knocked down
 static var _glow_mat: ShaderMaterial = null
+## While a wall piece is built: the way its panels face in mesh space,
+## baked into every vertex's tangent for the knock-down (UP for a post).
+static var _knock_facing := Vector3.ZERO
 
 ## Shapes other than the cube exist for a subset of tiles. An item id packs
 ## shape and tile (see item_id), so both are recoverable from any id.
@@ -473,8 +478,19 @@ static func build() -> MeshLibrary:
 ## Loads every furniture model, merges its parts into one mesh under the
 ## tile shader (so the cutout and slice apply), and places it so its
 ## footprint is centred on the anchor cell(s) with its base on the floor.
+## The materials shared by every furniture piece, made once the pack's
+## atlas is known (from the first model loaded).
+static func _make_furniture_mats(tex: Texture2D) -> void:
+	_furniture_mat = _make_material(tex, "")
+	_furniture_mat.set_shader_parameter("cutout_exempt", 1.0)
+	_wall_mat = _furniture_mat.duplicate()
+	_wall_mat.set_shader_parameter("knockdown", 1.0)
+	_structure_mat = _furniture_mat.duplicate()
+	_structure_mat.set_shader_parameter("cutout_exempt", 0.0)
+	_glow_mat = _make_material(tex, "GLOW")
+
+
 static func _add_furniture(lib: MeshLibrary, atlas: Texture2D) -> void:
-	var mat: ShaderMaterial = null
 	var built: Array[int] = []
 	for kind: int in FURNITURE_SPECS:
 		var spec: Dictionary = FURNITURE_SPECS[kind]
@@ -499,9 +515,9 @@ static func _add_furniture(lib: MeshLibrary, atlas: Texture2D) -> void:
 					xf = (n as Node3D).transform * xf
 				n = n.get_parent()
 			for si in mi.mesh.get_surface_count():
-				if mat == null:
+				if _furniture_mat == null:
 					var src := mi.mesh.surface_get_material(si) as BaseMaterial3D
-					mat = _make_material(src.albedo_texture if src != null and src.albedo_texture != null else atlas, "")
+					_make_furniture_mats(src.albedo_texture if src != null and src.albedo_texture != null else atlas)
 				raw.append_from(mi.mesh, si, xf)
 		root.free()
 		var model := raw.commit()
@@ -519,15 +535,31 @@ static func _add_furniture(lib: MeshLibrary, atlas: Texture2D) -> void:
 				Vector3((size.x - 1) * 0.5 - centre.x * s, -0.5 - box.position.y * s, (size.y - 1) * 0.5 - centre.z * s))
 		var st := SurfaceTool.new()
 		st.begin(Mesh.PRIMITIVE_TRIANGLES)
-		st.append_from(model, 0, xf)
-		st.set_material(mat)
+		if spec.get("wall", false):
+			# Hung on a wall (shelves, torches): part of it, knocked down and
+			# cut with it. The pack's meshes carry no tangents, so re-emit
+			# the vertices with the wall's facing (the item's back is -z).
+			var arr := model.surface_get_arrays(0)
+			var verts: PackedVector3Array = arr[Mesh.ARRAY_VERTEX]
+			var norms: PackedVector3Array = arr[Mesh.ARRAY_NORMAL]
+			var uvs: PackedVector2Array = arr[Mesh.ARRAY_TEX_UV]
+			var idx: PackedInt32Array = arr[Mesh.ARRAY_INDEX]
+			st.set_tangent(Plane(Vector3(0, 0, 1), 1.0))
+			for i in idx:
+				st.set_normal(norms[i])
+				st.set_uv(uvs[i])
+				st.add_vertex(xf * verts[i])
+			st.set_material(_wall_mat)
+		else:
+			st.append_from(model, 0, xf)
+			st.set_material(_furniture_mat)
 		var id := furniture_id(kind)
 		lib.create_item(id)
 		lib.set_item_name(id, "FURNITURE_" + Furniture.keys()[kind])
 		lib.set_item_mesh(id, st.commit())
 		lib.set_item_shapes(id, [])
-	_furniture_mat = mat
-	_glow_mat = _make_material(mat.get_shader_parameter("atlas"), "GLOW")
+	if _furniture_mat == null:
+		_make_furniture_mats(atlas)
 	for kind in built:
 		var id := furniture_id(kind)
 		var mesh: ArrayMesh
@@ -607,6 +639,7 @@ static func _bevel_box(st: SurfaceTool, a: Vector3, b: Vector3, col: int, row: i
 		if axis != 1: p.y = sy * (h.y - bv)
 		if axis != 2: p.z = sz * (h.z - bv)
 		return c + p
+	var facing := (xf.basis * _knock_facing).normalized() if _knock_facing != Vector3.ZERO else Vector3.ZERO
 	var emit := func(raw: Array, n: Vector3) -> void:
 		var pts: Array[Vector3] = []
 		for p: Vector3 in raw:
@@ -616,9 +649,9 @@ static func _bevel_box(st: SurfaceTool, a: Vector3, b: Vector3, col: int, row: i
 			uvs.append(uv_at.call(p))
 		var wn := (xf.basis * n).normalized()
 		if pts.size() == 4:
-			_quad(st, pts, uvs, wn)
+			_quad(st, pts, uvs, wn, facing)
 		else:
-			_tri(st, pts, uvs, wn)
+			_tri(st, pts, uvs, wn, facing)
 	var signs := [-1, 1]
 	# Faces.
 	for axis in 3:
@@ -688,13 +721,15 @@ static func _flame(st: SurfaceTool, base: Vector3, width: float, height: float, 
 static func _build_fireplace() -> ArrayMesh:
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
-	st.set_material(_furniture_mat)
+	st.set_material(_furniture_mat)  # furniture: stays whole when its wall is knocked down
 	var yr := Vector2(-0.5, 2.5)
 	var S := Swatch.STONE
+	# The jambs and back sit just inside the hearth's ends, so no two boxes
+	# share a face (coplanar faces shimmer as the camera moves).
 	_bevel_box(st, Vector3(-0.48, -0.5, -0.5), Vector3(1.48, -0.38, 0.42), S, 0, 0.03, yr)   # hearth
-	_bevel_box(st, Vector3(-0.48, -0.5, -0.5), Vector3(1.48, 1.0, -0.28), S, 0, 0.03, yr)   # back
-	_bevel_box(st, Vector3(-0.48, -0.5, -0.5), Vector3(-0.08, 0.8, 0.25), S, 0, 0.04, yr)   # left jamb
-	_bevel_box(st, Vector3(1.08, -0.5, -0.5), Vector3(1.48, 0.8, 0.25), S, 0, 0.04, yr)     # right jamb
+	_bevel_box(st, Vector3(-0.46, -0.4, -0.5), Vector3(1.46, 1.0, -0.28), S, 0, 0.03, yr)   # back
+	_bevel_box(st, Vector3(-0.46, -0.4, -0.5), Vector3(-0.08, 0.8, 0.25), S, 0, 0.04, yr)   # left jamb
+	_bevel_box(st, Vector3(1.08, -0.4, -0.5), Vector3(1.46, 0.8, 0.25), S, 0, 0.04, yr)     # right jamb
 	_bevel_box(st, Vector3(-0.5, 0.8, -0.5), Vector3(1.5, 1.0, 0.3), S, 0, 0.04, yr)        # lintel
 	_bevel_box(st, Vector3(-0.5, 1.0, -0.5), Vector3(1.5, 1.1, 0.4), Swatch.WOOD, 0, 0.02, yr)  # mantel shelf
 	_bevel_box(st, Vector3(0.05, 1.1, -0.5), Vector3(0.95, 2.5, 0.05), S, 0, 0.04, yr)     # chimney breast
@@ -727,10 +762,12 @@ static func _build_counter() -> ArrayMesh:
 	_bevel_box(st, Vector3(-0.5, 0.15, -0.38), Vector3(0.5, 0.25, 0.4), Swatch.WOOD, 0, 0.02, yr, Vector2(0.3, 0.45))  # top
 	_bevel_box(st, Vector3(-0.5, -0.5, 0.24), Vector3(0.5, 0.15, 0.34), Swatch.WOOD, 0, 0.02, yr)   # front
 	_bevel_box(st, Vector3(-0.36, -0.36, 0.33), Vector3(0.36, 0.02, 0.37), Swatch.TAN, 0, 0.015, yr)  # front panel
-	_bevel_box(st, Vector3(-0.5, -0.5, -0.36), Vector3(-0.44, 0.15, 0.3), Swatch.WOOD, 0, 0.015, yr)  # left end
-	_bevel_box(st, Vector3(0.44, -0.5, -0.36), Vector3(0.5, 0.15, 0.3), Swatch.WOOD, 0, 0.015, yr)   # right end
-	_bevel_box(st, Vector3(-0.5, -0.5, -0.36), Vector3(0.5, -0.42, 0.28), Swatch.WOOD, 0, 0.015, yr)  # bottom board
-	_bevel_box(st, Vector3(-0.5, -0.2, -0.36), Vector3(0.5, -0.14, 0.24), Swatch.WOOD, 0, 0.015, yr)   # shelf
+	# The ends stop at the front's back face and the boards stop at the
+	# ends' inner faces, so no two boxes share a face.
+	_bevel_box(st, Vector3(-0.5, -0.5, -0.36), Vector3(-0.44, 0.15, 0.24), Swatch.WOOD, 0, 0.015, yr)  # left end
+	_bevel_box(st, Vector3(0.44, -0.5, -0.36), Vector3(0.5, 0.15, 0.24), Swatch.WOOD, 0, 0.015, yr)   # right end
+	_bevel_box(st, Vector3(-0.44, -0.5, -0.36), Vector3(0.44, -0.42, 0.24), Swatch.WOOD, 0, 0.015, yr)  # bottom board
+	_bevel_box(st, Vector3(-0.44, -0.2, -0.36), Vector3(0.44, -0.14, 0.24), Swatch.WOOD, 0, 0.015, yr)   # shelf
 	return st.commit()
 
 
@@ -760,7 +797,8 @@ static func _wall_plaster(st: SurfaceTool, x0: float, y0: float, x1: float, y1: 
 static func _build_wall(ground: bool, window: bool, door: bool) -> ArrayMesh:
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
-	st.set_material(_furniture_mat)
+	st.set_material(_wall_mat)
+	_knock_facing = Vector3(0, 0, 1)
 	var yr := Vector2(-0.5, 2.5)
 	var base := 0.1 if ground else -0.36
 	if ground:
@@ -786,10 +824,12 @@ static func _build_wall(ground: bool, window: bool, door: bool) -> ArrayMesh:
 		var wx := 0.28
 		var wy0 := 0.95
 		var wy1 := 1.85
-		_wall_plaster(st, -0.38, base, 0.38, wy0, yr)
-		_wall_plaster(st, -0.38, wy1, 0.38, 2.36, yr)
-		_wall_plaster(st, -0.38, wy0, -wx, wy1, yr)
-		_wall_plaster(st, wx, wy0, 0.38, wy1, yr)
+		# Plaster meets the frame's outer faces; sharing a face with the
+		# sill or a jamb would flicker.
+		_wall_plaster(st, -0.38, base, 0.38, wy0 - 0.08, yr)
+		_wall_plaster(st, -0.38, wy1 + 0.08, 0.38, 2.36, yr)
+		_wall_plaster(st, -0.38, wy0 - 0.08, -wx - 0.06, wy1 + 0.08, yr)
+		_wall_plaster(st, wx + 0.06, wy0 - 0.08, 0.38, wy1 + 0.08, yr)
 		_wall_beam(st, Vector3(-wx - 0.06, wy0 - 0.08, -0.48), Vector3(wx + 0.06, wy0, -0.22))  # sill
 		_wall_beam(st, Vector3(-wx - 0.06, wy1, -0.48), Vector3(wx + 0.06, wy1 + 0.08, -0.22))  # head
 		_wall_beam(st, Vector3(-wx - 0.06, wy0, -0.46), Vector3(-wx, wy1, -0.24))
@@ -801,6 +841,7 @@ static func _build_wall(ground: bool, window: bool, door: bool) -> ArrayMesh:
 		_wall_plaster(st, -0.38, base, 0.38, 1.15, yr)
 		_wall_beam(st, Vector3(-0.38, 1.15, WALL_Z0), Vector3(0.38, 1.27, WALL_Z1))  # mid rail
 		_wall_plaster(st, -0.38, 1.27, 0.38, 2.36, yr)
+	_knock_facing = Vector3.ZERO
 	return st.commit()
 
 
@@ -809,13 +850,15 @@ static func _build_wall(ground: bool, window: bool, door: bool) -> ArrayMesh:
 static func _build_post(ground: bool) -> ArrayMesh:
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
-	st.set_material(_furniture_mat)
+	st.set_material(_wall_mat)
+	_knock_facing = Vector3.UP
 	var yr := Vector2(-0.5, 2.5)
 	var base := -0.5
 	if ground:
 		_bevel_box(st, Vector3(-0.5, -0.5, -0.5), Vector3(-0.1, 0.1, -0.1), Swatch.STONE, 0, 0.03, yr)
 		base = 0.1
 	_wall_beam(st, Vector3(-0.5, base, -0.5), Vector3(-0.2, 2.5, -0.2))
+	_knock_facing = Vector3.ZERO
 	return st.commit()
 
 
@@ -824,7 +867,8 @@ static func _build_post(ground: bool) -> ArrayMesh:
 static func _build_band(post: bool) -> ArrayMesh:
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
-	st.set_material(_furniture_mat)
+	st.set_material(_wall_mat)
+	_knock_facing = Vector3.UP if post else Vector3(0, 0, 1)
 	var yr := Vector2(-0.5, 0.5)
 	if post:
 		_wall_beam(st, Vector3(-0.5, -0.5, -0.5), Vector3(-0.2, 0.5, -0.2))
@@ -834,6 +878,7 @@ static func _build_band(post: bool) -> ArrayMesh:
 		_wall_beam(st, Vector3(-0.5, -0.38, WALL_Z0), Vector3(-0.38, 0.38, WALL_Z1))
 		_wall_beam(st, Vector3(0.38, -0.38, WALL_Z0), Vector3(0.5, 0.38, WALL_Z1))
 		_wall_plaster(st, -0.38, -0.38, 0.38, 0.38, yr)
+	_knock_facing = Vector3.ZERO
 	return st.commit()
 
 
@@ -870,7 +915,8 @@ static func _partition_arm(st: SurfaceTool, ang: float) -> void:
 static func _build_partition(arms: int, door: bool) -> ArrayMesh:
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
-	st.set_material(_furniture_mat)
+	st.set_material(_wall_mat)
+	_knock_facing = Vector3(0, 0, 1)
 	var id := Transform3D.IDENTITY
 	var t := PART_HALF
 	if door:
@@ -881,11 +927,19 @@ static func _build_partition(arms: int, door: bool) -> ArrayMesh:
 		_part_beam(st, Vector3(-0.5, 2.0, -t), Vector3(0.5, 2.12, t), id)   # lintel
 		_part_beam(st, Vector3(-0.5, 2.38, -t), Vector3(0.5, 2.5, t), id)   # top plate
 		_part_plaster(st, Vector3(-0.5, 2.12, -0.09), Vector3(0.5, 2.38, 0.09), id)
+		_knock_facing = Vector3.ZERO
 		return st.commit()
+	# The post faces the way a straight run's panels do; where runs meet it
+	# belongs to both, and goes when either is in front.
+	var along_x := (arms & 5) != 0
+	var along_z := (arms & 10) != 0
+	_knock_facing = Vector3.UP if along_x == along_z else (Vector3(0, 0, 1) if along_x else Vector3(1, 0, 0))
 	_part_beam(st, Vector3(-0.12, -0.5, -0.12), Vector3(0.12, 2.5, 0.12), id)
+	_knock_facing = Vector3(0, 0, 1)
 	for i in 4:
 		if arms & (1 << i):
 			_partition_arm(st, -i * PI / 2.0)
+	_knock_facing = Vector3.ZERO
 	return st.commit()
 
 
@@ -895,10 +949,12 @@ static func _build_partition(arms: int, door: bool) -> ArrayMesh:
 static func _build_chimney() -> ArrayMesh:
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
-	st.set_material(_furniture_mat)
+	st.set_material(_wall_mat)
+	_knock_facing = Vector3(0, 0, 1)
 	var yr := Vector2(-0.5, 2.5)
 	_bevel_box(st, Vector3(-0.02, -0.5, -0.5), Vector3(1.02, -0.3, 0.12), Swatch.STONE, 0, 0.03, yr)
 	_bevel_box(st, Vector3(0.05, -0.5, -0.5), Vector3(0.95, 2.5, 0.05), Swatch.STONE, 0, 0.04, yr)
+	_knock_facing = Vector3.ZERO
 	return st.commit()
 
 
@@ -907,11 +963,13 @@ static func _build_chimney() -> ArrayMesh:
 static func _build_chimney_stack() -> ArrayMesh:
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
-	st.set_material(_furniture_mat)
+	st.set_material(_wall_mat)
+	_knock_facing = Vector3.UP
 	var yr := Vector2(-1.5, 0.9)
 	_bevel_box(st, Vector3(0.2, -1.5, -0.42), Vector3(0.8, 0.6, 0.0), Swatch.STONE, 0, 0.03, yr)
 	_bevel_box(st, Vector3(0.12, 0.6, -0.5), Vector3(0.88, 0.76, 0.08), Swatch.STONE, 0, 0.03, yr)
 	_bevel_box(st, Vector3(0.3, 0.76, -0.34), Vector3(0.7, 0.8, -0.08), Swatch.DARK, 0, 0.0, yr, Vector2(0.8, 0.95))
+	_knock_facing = Vector3.ZERO
 	return st.commit()
 
 
@@ -1051,7 +1109,7 @@ static func _tread_outline(i: int, x0: float, x1: float, z0: float, z1: float) -
 static func _build_stair() -> ArrayMesh:
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
-	st.set_material(_furniture_mat)
+	st.set_material(_structure_mat)
 	var yr := Vector2(-0.6, 0.5)
 	var half := sqrt(2.0) * 0.5
 	for sx: float in [-1.0, 1.0]:
@@ -1082,7 +1140,7 @@ static func _build_stair() -> ArrayMesh:
 static func _build_stair_posts(top: bool) -> ArrayMesh:
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
-	st.set_material(_furniture_mat)
+	st.set_material(_structure_mat)
 	var yr := Vector2(-0.5, 0.5)
 	var z := -0.35
 	# Where the stringers' lower edge passes over the posts, in the cell above.
@@ -1181,25 +1239,31 @@ static func _slot_corners(slot: int, u0 := 0.0, v0 := 0.0, u1 := 1.0, v1 := 1.0)
 
 ## Godot treats clockwise winding as front-facing; both helpers flip the
 ## order when the given points were built counter-clockwise for `n`.
-static func _quad(st: SurfaceTool, p: Array[Vector3], uv: Array[Vector2], n: Vector3) -> void:
+## `tangent`, if given, is stored on every vertex (wall pieces carry
+## their facing there for the knock-down).
+static func _quad(st: SurfaceTool, p: Array[Vector3], uv: Array[Vector2], n: Vector3, tangent := Vector3.ZERO) -> void:
 	var pts := p.duplicate()
 	var uvs := uv.duplicate()
 	if (pts[1] - pts[0]).cross(pts[2] - pts[0]).dot(n) > 0.0:
 		pts.reverse()
 		uvs.reverse()
 	st.set_normal(n)
+	if tangent != Vector3.ZERO:
+		st.set_tangent(Plane(tangent, 1.0))
 	for i in [0, 1, 2, 0, 2, 3]:
 		st.set_uv(uvs[i])
 		st.add_vertex(pts[i])
 
 
-static func _tri(st: SurfaceTool, p: Array[Vector3], uv: Array[Vector2], n: Vector3) -> void:
+static func _tri(st: SurfaceTool, p: Array[Vector3], uv: Array[Vector2], n: Vector3, tangent := Vector3.ZERO) -> void:
 	var pts := p.duplicate()
 	var uvs := uv.duplicate()
 	if (pts[1] - pts[0]).cross(pts[2] - pts[0]).dot(n) > 0.0:
 		pts.reverse()
 		uvs.reverse()
 	st.set_normal(n)
+	if tangent != Vector3.ZERO:
+		st.set_tangent(Plane(tangent, 1.0))
 	for i in 3:
 		st.set_uv(uvs[i])
 		st.add_vertex(pts[i])

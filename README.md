@@ -22,7 +22,7 @@ same scale; there is no zoom-in view.
   cells keep the canopy solid for the cover check. Canopies are slightly
   translucent; since blended materials cannot cast shadows, each has a
   shadow-only twin item one cell higher. Trees only grow on level ground.
-  Tree materials are exempt from the cutout
+  Tree materials are exempt from the occluder cut, like furniture
 - Soft shadows: the sun has an angular size and the directional shadow uses
   the highest soft filter quality, so shadow edges blur with distance
 - Ground props on a few percent of flat grass and sand columns: weeds and
@@ -124,9 +124,22 @@ same scale; there is no zoom-in view.
   only through their stairs. A click goes to the floor nearest the surface it
   hit, so a visible stair step is a valid target from either floor
 - Occlusion handling, all in shaders/tiles.gdshader and shaders/xray.gdshader:
-  - cutout: while something is overhead, tiles between the camera and the
-    character within a wide radius are dithered away, so the walls facing
-    the camera open up indoors
+  - knock-down: while something is overhead, the wall pieces of the
+    character's own building (house walls, partitions, posts, chimneys, and
+    wall-hung shelves and torches, which count as part of their wall) that
+    face the camera are cut to waist height, one cube over the feet, so the
+    room opens up while its far walls and everything in it stay as they are.
+    Cut heights are whole cubes, so cubes, floors and furniture are cut by
+    cell rather than by fragment, which keeps the cut edges clean. The wall the character stands in the doorway of counts
+    as facing the camera. A wall piece's facing is baked into its vertex
+    tangents, since a GridMap gives the shader no per-instance transform
+  - occluders: a building standing between the camera and the character
+    (found each frame by casting a ray from the character's body toward
+    the camera from nine points across the character's body against every
+    building's box; the nearest three count) is cut
+    down to a waist-high ground floor: its roof, upper storeys and wall
+    tops go, its furniture stays, so its doorways show. This works whether
+    the character is outdoors behind it or indoors with it in the way
   - level slice: when something solid is overhead, every cube more than three
     above the character's feet is hidden within a nine cube radius, so tree
     canopies and (later) roofs lift away
@@ -147,7 +160,7 @@ Or run it directly:
 Optional user args go after `--`:
 
     --seed=N              world seed (default 1337)
-    --nocutout            start with the cutout off
+    --nocutout            start with the knock-down and occluder cuts off
     --noslice             start with the level slice off
     --nozoom              start with the auto zoom off (--zoom= implies it)
     --blend=off           start with material blending off
@@ -172,11 +185,11 @@ with `class_name` so the class cache exists):
 | Input | Action |
 |---|---|
 | W A S D or arrows | walk along the grid axes: W is up-right on screen, D down-right, S down-left, A up-left; two keys for a diagonal; hold to keep walking |
-| Left click | walk to the clicked column; clicks pass through sliced roofs and cutouts |
+| Left click | walk to the clicked column; clicks pass through sliced roofs and cut-down buildings |
 | Q / E | rotate camera 90 degrees |
 | Mouse wheel | zoom, on top of the auto zoom |
 | Z | toggle the auto zoom: the camera closes in by 1.4x inside the town wall and 2x indoors, easing over 0.4 s |
-| C | toggle the cutout (active only when something is overhead) |
+| C | toggle the knock-down (active only when something is overhead) and the occluder cuts |
 | V | toggle the level slice (active only when something is overhead) |
 | B | toggle material blending between grass, sand, stone and snow |
 | Esc | quit |
@@ -193,5 +206,5 @@ with `class_name` so the class cache exists):
     scripts/player.gd         Walking figure
     scripts/camera_rig.gd     Isometric orthographic camera
     scripts/main.gd           Wiring, input, HUD, self-test, shader globals
-    shaders/tiles.gdshader    Atlas lookup plus the occlusion cutout
+    shaders/tiles.gdshader    Atlas lookup plus the knock-down, occluder cuts and slice
     shaders/xray.gdshader     Inverted-depth silhouette for the character

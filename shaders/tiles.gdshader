@@ -1,15 +1,24 @@
 shader_type spatial;
 render_mode cull_back, specular_disabled;
 
-// Shared by every tile. Two occlusion aids, both dithered:
-//  - cutout: fragments between the camera and the character, near them on
-//    screen and above their feet, are removed so they stay visible.
-//  - slice: everything above slice_height within slice_radius of the
-//    character is removed, like lifting the roof off a building.
+// Shared by every tile. Three occlusion aids:
+//  - knock-down (indoors): wall pieces facing the camera near the character
+//    are cut to waist height (one cube over the feet), so the room stays
+//    open to view while its far walls and everything in it stand as they are.
+//  - occluders: a building standing between the camera and the character
+//    (the game finds up to three by footprint) loses everything above the
+//    character's waist except its ground-floor furniture, so it stands as
+//    half-height ground-floor walls with its doorways showing.
+//  - slice (indoors): everything above slice_height within slice_radius of
+//    the character, and over the whole footprint of the building they are
+//    in, is removed, like lifting the roof off a building.
 
 uniform sampler2D atlas : source_color, filter_nearest_mipmap, repeat_disable;
-uniform float cutout_fade = 0.8;     // width of the dither ramp at the edge
-uniform float cutout_exempt = 0.0;   // 1 for materials the cutout must leave alone (trees)
+uniform float cutout_exempt = 0.0;   // 1 for furniture and trees, which occluder cuts leave alone
+// 1 for wall pieces. Their vertex tangent carries the wall's facing axis
+// in mesh space (y for a post, which faces every way), turned with the
+// instance like a normal.
+uniform float knockdown = 0.0;
 uniform float terrain_blend = 0.0;   // 1 for natural ground tiles: blend materials across cells
 
 // One texel per world column, wrapping every MAP_SIZE cells: weights of
@@ -23,25 +32,43 @@ uniform sampler2D depth_tex : hint_depth_texture, filter_nearest;
 const float MAP_SIZE = 512.0;
 const float ATLAS_COLS = 8.0;
 const float INSET = 0.5 / 256.0;   // half a texel of a 256 px atlas
-uniform float character_height = 1.8;
-
 global uniform vec3 player_pos;      // character feet, world space
-global uniform vec3 cam_right;
-global uniform vec3 cam_up;
 global uniform vec3 cam_forward;
-global uniform float cutout_enabled;   // 0..1 strength (C cycles modes)
-global uniform float cutout_radius;    // screen-plane distance from the character's body
-global uniform float cutout_floor;     // world y; only cubes at or above it are cut
+global uniform float cutout_enabled;   // 0..1 strength of the knock-down (C toggles)
+global uniform float cutout_floor;     // world y; only what is at or above it is cut
+global uniform vec4 occluder_a;        // x0, z0, x1, z1 cells (inclusive) of a building in the way, or empty
+global uniform vec4 occluder_b;
+global uniform vec4 occluder_c;
+global uniform float occluder_strength;
+global uniform float occluder_upper;   // world y of the occluders' upper floor: furniture from there up goes too
+global uniform vec4 own_building;      // footprint of the building the character is in, or empty
 global uniform float slice_height;     // world y; cubes at or above it are hidden
 global uniform float slice_strength;   // 0..1, fades the slice in and out
 uniform float slice_radius = 9.0;      // horizontal distance from the character
 uniform float slice_fade = 2.0;
+uniform float knock_radius = 14.0;     // the knock-down reaches a whole room's front walls
 
 const float BAYER[16] = float[16](
 	0.0 / 16.0, 8.0 / 16.0, 2.0 / 16.0, 10.0 / 16.0,
 	12.0 / 16.0, 4.0 / 16.0, 14.0 / 16.0, 6.0 / 16.0,
 	3.0 / 16.0, 11.0 / 16.0, 1.0 / 16.0, 9.0 / 16.0,
 	15.0 / 16.0, 7.0 / 16.0, 13.0 / 16.0, 5.0 / 16.0);
+
+// World y of the centre of the cell this fragment's piece sits in. Cut
+// heights are whole cubes, so cubes, floors and furniture are cut by cell
+// rather than by fragment: a face lying exactly on the cut plane then
+// belongs wholly to one side, and no edge pixels scatter along the cut.
+// Wall pieces are three cubes tall and cut mid-panel by fragment.
+varying float cell_y;
+
+void vertex() {
+	cell_y = (INV_VIEW_MATRIX * (MODELVIEW_MATRIX * vec4(VERTEX, 1.0))).y - VERTEX.y;
+}
+
+// Whether cell c lies in the footprint r = (x0, z0, x1, z1), inclusive.
+bool in_rect(vec2 c, vec4 r) {
+	return c.x >= r.x && c.y >= r.y && c.x <= r.z && c.y <= r.w;
+}
 
 // Atlas coordinates of the same point in another slot.
 vec2 slot_uv(int slot, vec2 local) {
@@ -131,26 +158,56 @@ void fragment() {
 		}
 	}
 
-	// How far in front of the character this fragment is, along the view axis.
-	float in_front = -dot(rel, cam_forward);
-	// Screen-plane distance from the character's body (a vertical segment).
-	vec2 p = vec2(dot(rel, cam_right), dot(rel, cam_up));
-	float body_top = character_height * cam_up.y;
-	vec2 nearest = vec2(0.0, clamp(p.y, 0.0, body_top));
-	float d = length(p - nearest);
-
-	// Only cut whole cubes from the cell above the feet upward, so ramps and
-	// slabs around the character stay put and nothing is cut mid-cube.
-	float above = step(cutout_floor + 0.001, world_pos.y);
-	float front = clamp((in_front - 0.4) / 0.6, 0.0, 1.0);
-	float near = clamp((cutout_radius - d) / cutout_fade, 0.0, 1.0);
-	float cut = above * front * near * cutout_enabled * (1.0 - cutout_exempt);
-
-	// Level slice. The tiny offset keeps the top face of the cube just below
-	// the cut, which sits exactly at slice_height, from being removed.
+	// Only cut from the cell above the feet upward, so ramps and slabs
+	// around the character stay put; wall pieces are cut at waist height.
+	float above = (knockdown > 0.5 ? world_pos.y >= cutout_floor : cell_y > cutout_floor) ? 1.0 : 0.0;
 	float dxz = length(rel.xz);
-	float sliced = step(slice_height + 0.001, world_pos.y)
-		* clamp((slice_radius - dxz) / slice_fade, 0.0, 1.0) * slice_strength;
+	// The cell this fragment belongs to, nudged inward off its face so the
+	// outer faces of edge cubes count with their cube.
+	vec2 cellxz = floor(world_pos.xz - world_n.xz * 0.01);
+	bool has_own = own_building.x <= own_building.z;
+	float cut = 0.0;
+
+	// Occluding buildings: cubes and walls inside their footprint above the
+	// character's waist go; furniture stays on the ground floor but goes
+	// with the upper floors, so nothing is left hanging in the air.
+	if (occluder_strength > 0.0 && (in_rect(cellxz, occluder_a) || in_rect(cellxz, occluder_b) || in_rect(cellxz, occluder_c))) {
+		bool building = knockdown > 0.5 || cutout_exempt < 0.5;
+		float upstairs = cell_y > occluder_upper ? 1.0 : 0.0;
+		cut = (building ? above : upstairs) * occluder_strength;
+	}
+
+	// Knock-down. A wall piece is in front of the character when its cell
+	// lies on the camera's side of theirs along the axis the wall faces, or
+	// in their own row (the wall they stand in the doorway of); a post
+	// counts on either axis.
+	if (knockdown > 0.5 && cutout_enabled > 0.0) {
+		vec3 facing = (INV_VIEW_MATRIX * vec4(TANGENT, 0.0)).xyz;
+		vec2 relcell = cellxz - floor(player_pos.xz);
+		vec2 camside = -cam_forward.xz;
+		bool front;
+		if (abs(facing.y) > 0.5) {
+			front = relcell.x * camside.x > 0.0 || relcell.y * camside.y > 0.0;
+		} else if (abs(facing.x) > abs(facing.z)) {
+			front = relcell.x * camside.x >= 0.0;
+		} else {
+			front = relcell.y * camside.y >= 0.0;
+		}
+		// The character's own building, whole; under other cover (a tree,
+		// a bridge) whatever wall pieces are within reach.
+		float near = has_own ? (in_rect(cellxz, own_building) ? 1.0 : 0.0)
+			: clamp((knock_radius - dxz) / slice_fade, 0.0, 1.0);
+		cut = max(cut, (front ? 1.0 : 0.0) * above * near * cutout_enabled);
+	}
+
+	// Level slice.
+	// Indoors the whole of the character's own building is sliced and
+	// nothing else (other roofs are left to the occluder cut, so none
+	// half-fades into a ghost); elsewhere the radius handles trees and the
+	// like overhead.
+	float slice_reach = has_own ? (in_rect(cellxz, own_building) ? 1.0 : 0.0)
+		: clamp((slice_radius - dxz) / slice_fade, 0.0, 1.0);
+	float sliced = (cell_y > slice_height ? 1.0 : 0.0) * slice_reach * slice_strength;
 	cut = max(cut, sliced);
 	if (cut > 0.0) {
 		ivec2 px = ivec2(FRAGCOORD.xy) % 4;

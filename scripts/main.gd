@@ -13,11 +13,10 @@ var hud: Label
 var _click_pending := false
 var _click_pos := Vector2.ZERO
 const SLICE_HEADROOM := 3  # cubes above the feet that stay visible
-const CUTOUT_RADIUS := 6.0  # screen-plane radius that clears the walls facing the camera
 
 ## Both occlusion aids act only while something is overhead (indoors, under
 ## a canopy); the keys just switch them off for comparison.
-var _status := "WASD/arrows or click: walk   Q/E: rotate   Wheel: zoom   Z: auto zoom   C: cutout   V: slice   B: blend   Esc: quit"
+var _status := "WASD/arrows or click: walk   Q/E: rotate   Wheel: zoom   Z: auto zoom   C: knock-down   V: slice   B: blend   Esc: quit"
 var _blend_on := true
 var town: TownBuilder
 var _cutout_on := true
@@ -28,12 +27,35 @@ const ZOOM_TOWN := 16.0
 const ZOOM_INDOORS := 11.0
 var _auto_zoom_on := true
 var _cutout_strength := 0.0
+var _occluders: Array[Rect2i] = []   # buildings between the camera and the character
+var _own_building := Rect2i()        # the building the character is in, if any (empty otherwise)
+var _occluder_seen := {}             # Rect2i -> seconds since a ray last hit it
+var _occluder_strength := 0.0
+const OCCLUDER_HOLD := 0.3           # seconds a building stays cut after the rays leave it
+const EMPTY_RECT := Vector4(1, 1, 0, 0)  # x0 > x1: nothing
 var _slice_on := true
 var _slice_strength := 0.0
 var _covered := false
 
 
+## The tile shader's globals, registered here as well as in project.godot so
+## an editor started before one was added still runs the game correctly (an
+## unregistered global silently reads as zero).
+const SHADER_GLOBALS := {
+	"occluder_a": [RenderingServer.GLOBAL_VAR_TYPE_VEC4, Vector4(1, 1, 0, 0)],
+	"occluder_b": [RenderingServer.GLOBAL_VAR_TYPE_VEC4, Vector4(1, 1, 0, 0)],
+	"occluder_c": [RenderingServer.GLOBAL_VAR_TYPE_VEC4, Vector4(1, 1, 0, 0)],
+	"occluder_strength": [RenderingServer.GLOBAL_VAR_TYPE_FLOAT, 0.0],
+	"occluder_upper": [RenderingServer.GLOBAL_VAR_TYPE_FLOAT, 100000.0],
+	"own_building": [RenderingServer.GLOBAL_VAR_TYPE_VEC4, Vector4(1, 1, 0, 0)],
+}
+
+
 func _ready() -> void:
+	for name: String in SHADER_GLOBALS:
+		if not ProjectSettings.has_setting("shader_globals/" + name):
+			var spec: Array = SHADER_GLOBALS[name]
+			RenderingServer.global_shader_parameter_add(name, spec[0], spec[1])
 	var seed_value := 1337
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--seed="):
@@ -184,7 +206,7 @@ func _process(delta: float) -> void:
 	_update_shader_globals()
 	if _auto_zoom_on:
 		rig.context_zoom = _context_zoom()
-	hud.text = "%s\nFPS %d   cell %s   chunks %d loaded, %d pending   zoom %s   cutout %s   slice %s   blend %s" % [
+	hud.text = "%s\nFPS %d   cell %s   chunks %d loaded, %d pending   zoom %s   knock-down %s   slice %s   blend %s" % [
 		_status, Engine.get_frames_per_second(), player.cell,
 		chunks.loaded_count(), chunks.pending_count(),
 		"auto" if _auto_zoom_on else "manual",
@@ -228,11 +250,18 @@ func _update_occlusion(delta: float) -> void:
 	_slice_strength = move_toward(_slice_strength, want_slice, delta * 4.0)
 	RenderingServer.global_shader_parameter_set("slice_strength", _slice_strength)
 	RenderingServer.global_shader_parameter_set("slice_height", float(player.cell.y + SLICE_HEADROOM))
+	_own_building = Rect2i()
+	var own := Vector2i(player.cell.x, player.cell.z)
+	for b in town.buildings:
+		if (b[0] as Rect2i).has_point(own):
+			_own_building = b[0]
+	RenderingServer.global_shader_parameter_set("own_building", EMPTY_RECT if _own_building.size == Vector2i.ZERO
+		else Vector4(_own_building.position.x, _own_building.position.y, _own_building.end.x - 1, _own_building.end.y - 1))
 
 	var want_cutout := 1.0 if _cutout_on and _covered else 0.0
 	_cutout_strength = move_toward(_cutout_strength, want_cutout, delta * 4.0)
 	RenderingServer.global_shader_parameter_set("cutout_enabled", _cutout_strength)
-	RenderingServer.global_shader_parameter_set("cutout_radius", CUTOUT_RADIUS)
+	_update_occluders(delta)
 	RenderingServer.global_shader_parameter_set("cutout_floor", float(player.cell.y + 1))
 
 
@@ -267,26 +296,100 @@ func _key_step() -> Variant:
 	return n
 
 
-## Mirrors the shader's slice and cutout tests, so clicks fall through
-## geometry the viewer cannot see.
+## Mirrors the shader's slice and occluder cuts, so clicks fall through
+## geometry the viewer cannot see. Knocked-down walls need no mirror: wall
+## pieces have no collision, so a click already passes through them.
 func _is_hidden_point(p: Vector3) -> bool:
 	var rel := p - player.global_position
 	if _slice_strength > 0.5:
 		var slice_y := float(player.cell.y + SLICE_HEADROOM)
-		if p.y > slice_y + 0.001 and Vector2(rel.x, rel.z).length() < 9.0 - 1.0:
+		var c := Vector2i(floori(p.x), floori(p.z))
+		var in_reach := _own_building.has_point(c) if _own_building.size != Vector2i.ZERO else Vector2(rel.x, rel.z).length() < 9.0 - 1.0
+		if p.y > slice_y + 0.001 and in_reach:
 			return true
-	if _cutout_strength > 0.5 and p.y > float(player.cell.y + 1) + 0.001:
-		var basis := rig.camera.global_transform.basis
-		var in_front := -rel.dot(-basis.z)
-		var sp := Vector2(rel.dot(basis.x), rel.dot(basis.y))
-		var body_top := 1.8 * basis.y.y
-		var d := (sp - Vector2(0, clampf(sp.y, 0, body_top))).length()
-		if in_front > 0.7 and d < CUTOUT_RADIUS - 0.4:
-			return true
+	if _occluder_strength > 0.5 and p.y > float(player.cell.y + 1) + 0.001:
+		var c := Vector2i(floori(p.x), floori(p.z))
+		for r in _occluders:
+			if r.has_point(c):
+				return true
 	return false
 
 
-## Feeds the tile shader what it needs for the occlusion cutout.
+## Buildings standing between the camera and the character: those whose box
+## a ray toward the camera from any of nine points across the character's
+## body passes through, nearest first, at most three. Their footprints go
+## to the shader, which cuts them down to half-height ground-floor walls.
+const MAX_OCCLUDERS := 3
+
+func _update_occluders(delta: float) -> void:
+	var found: Array[Rect2i] = []
+	if _cutout_on:
+		var basis := rig.camera.global_transform.basis
+		var toward_cam := basis.z
+		var feet := player.global_position
+		var own := Vector2i(player.cell.x, player.cell.z)
+		var hits: Array[Array] = []  # [distance, rect]
+		for b in town.buildings:
+			var r: Rect2i = b[0]
+			if r.has_point(own):
+				continue
+			var lo := Vector3(r.position.x, b[1], r.position.y)
+			var hi := Vector3(r.end.x, b[2] + 1, r.end.y)
+			var best := INF
+			for y_off: float in [0.3, 1.0, 1.7]:
+				for side: float in [-0.6, 0.0, 0.6]:
+					var t := _ray_box(feet + Vector3(0, y_off, 0) + basis.x * side, toward_cam, lo, hi)
+					if t >= 0.0:
+						best = minf(best, t)
+			if best < INF:
+				hits.append([best, r])
+		hits.sort_custom(func(a: Array, b: Array) -> bool: return a[0] < b[0])
+		for i in mini(hits.size(), MAX_OCCLUDERS):
+			found.append(hits[i][1])
+	# Hysteresis: a building stays cut for a moment after the rays leave it,
+	# so one grazing a corner cannot flicker in and out frame by frame.
+	for r in found:
+		_occluder_seen[r] = 0.0
+	for r: Rect2i in _occluder_seen.keys():
+		_occluder_seen[r] += delta
+		if _occluder_seen[r] > OCCLUDER_HOLD:
+			_occluder_seen.erase(r)
+		elif not found.has(r) and found.size() < MAX_OCCLUDERS:
+			found.append(r)
+	_occluders = found
+	_occluder_strength = move_toward(_occluder_strength, 1.0 if not _occluders.is_empty() else 0.0, delta * 4.0)
+	RenderingServer.global_shader_parameter_set("occluder_strength", _occluder_strength)
+	RenderingServer.global_shader_parameter_set("occluder_upper", float(town.height + TownBuilder.STOREY))
+	for i in MAX_OCCLUDERS:
+		var v := EMPTY_RECT
+		if i < _occluders.size():
+			var r := _occluders[i]
+			v = Vector4(r.position.x, r.position.y, r.end.x - 1, r.end.y - 1)
+		RenderingServer.global_shader_parameter_set(["occluder_a", "occluder_b", "occluder_c"][i], v)
+
+
+## Distance along the ray from `from` in direction `dir` (unit) to the box
+## [lo, hi], or -1 if it misses; 0 when it starts inside.
+static func _ray_box(from: Vector3, dir: Vector3, lo: Vector3, hi: Vector3) -> float:
+	var t0 := 0.0
+	var t1 := 200.0
+	for axis in 3:
+		var d: float = dir[axis]
+		var o: float = from[axis]
+		if absf(d) < 1e-6:
+			if o < lo[axis] or o > hi[axis]:
+				return -1.0
+			continue
+		var ta: float = (lo[axis] - o) / d
+		var tb: float = (hi[axis] - o) / d
+		t0 = maxf(t0, minf(ta, tb))
+		t1 = minf(t1, maxf(ta, tb))
+		if t0 > t1:
+			return -1.0
+	return t0
+
+
+## Feeds the tile shader the character and camera for the knock-down.
 func _update_shader_globals() -> void:
 	var basis := rig.camera.global_transform.basis
 	RenderingServer.global_shader_parameter_set("player_pos", player.global_position)
@@ -529,8 +632,9 @@ func _run_selftest(shot: String) -> void:
 				if b.begins_with("--zoom="):
 					rig.snap(yaw, float(b.trim_prefix("--zoom=")))
 					rig.snap_to_target()
-					for i in 5:
-						await get_tree().process_frame
+			# Let the occlusion fades settle for the new view.
+			for i in 40:
+				await get_tree().process_frame
 			if not shot.is_empty():
 				await RenderingServer.frame_post_draw
 				get_viewport().get_texture().get_image().save_png(shot)

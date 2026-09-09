@@ -46,9 +46,29 @@ cutout_enabled={
 "type": "float",
 "value": 0.0
 }
-cutout_radius={
+occluder_a={
+"type": "vec4",
+"value": Vector4(1, 1, 0, 0)
+}
+occluder_b={
+"type": "vec4",
+"value": Vector4(1, 1, 0, 0)
+}
+occluder_c={
+"type": "vec4",
+"value": Vector4(1, 1, 0, 0)
+}
+occluder_strength={
 "type": "float",
-"value": 2.0
+"value": 0.0
+}
+occluder_upper={
+"type": "float",
+"value": 100000.0
+}
+own_building={
+"type": "vec4",
+"value": Vector4(1, 1, 0, 0)
 }
 cutout_floor={
 "type": "float",

@@ -270,6 +270,9 @@ const PART_ARMS := {
 var origin := Vector2i.ZERO   # world x, z of the town's corner
 var height := 0               # ground height inside the town
 var gate_cell := Vector3i.ZERO   # feet cell on the road outside the south gate
+## Every building's footprint in world cells and the rows it spans, from
+## its floor to the top of its roof: [Rect2i, y0, y1].
+var buildings: Array[Array] = []
 var demo_cell := Vector3i.ZERO   # feet cell inside the first house
 var demo_upper := Vector3i.ZERO  # feet cell on the first house's upstairs landing
 
@@ -314,6 +317,9 @@ func build(gen: WorldGen, center: Vector2i, with_houses: bool = true) -> void:
 					push_warning("town: %s at %s is within a cell of another house" % [h[1], h[0]])
 			rects.append(lay.rect)
 			_house(e, lay)
+			var eave_y := height + lay.storeys * STOREY
+			var mid := lay.rect.get_center()
+			buildings.append([Rect2i(lay.rect.position + origin, lay.rect.size), height + 1, _roof_top(lay.rect, eave_y, mid.x, mid.y)])
 	_town_wall(e)
 
 	gate_cell = Vector3i(origin.x + STREET, height + 1, origin.y + SIZE - 2)
@@ -583,8 +589,8 @@ func _house(e: WorldEdits, lay: Layout) -> void:
 					e.set_cell(_w(x, wy + WALL_H, z), TileLibrary.furniture_id(F.BAND), TileLibrary.rotation_index(k))
 		_partitions(e, lay, s, wy)
 
-	# Stone doorstep, then a gravel path from the door to the street.
-	e.set_cell(_w(door.x + out.x, h + 1, door.y + out.y), TileLibrary.slab_id(TileLibrary.Tile.STONE))
+	# A gravel path from the door to the street (no step: the floor is at
+	# ground level).
 	var p := door + out
 	for i in 40:
 		if _on_street(p.x) or _on_street(p.y):
