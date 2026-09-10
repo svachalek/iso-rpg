@@ -73,7 +73,8 @@ func _ready() -> void:
 	gen = WorldGen.new(seed_value)
 	var lib := TileLibrary.build()
 	town = TownBuilder.new()
-	town.build(gen, TownBuilder.find_site(gen, Vector2i.ZERO), not "--furniture" in OS.get_cmdline_user_args())
+	var gallery := "--furniture" in OS.get_cmdline_user_args() or "--nature" in OS.get_cmdline_user_args()
+	town.build(gen, TownBuilder.find_site(gen, Vector2i.ZERO), not gallery)
 	# A road out of every gate, heading off to a distant point.
 	var road_cells := 0
 	for start: Array in town.road_starts():
@@ -109,6 +110,8 @@ func _ready() -> void:
 			spawn = Vector3i(x, gen.height_at(x, z) + 1, z)
 	if "--furniture" in OS.get_cmdline_user_args():
 		_place_furniture_samples()
+	if "--nature" in OS.get_cmdline_user_args():
+		_place_nature_samples()
 		spawn = Vector3i(town.origin.x + 16, town.height + 1, town.origin.y + 28)
 	if "--shapes" in OS.get_cmdline_user_args():
 		_place_shape_samples()
@@ -571,6 +574,26 @@ func _place_furniture_samples() -> void:
 			z = town.origin.y + 2
 			x0 += 18
 	print("selftest: furniture samples from %s" % [Vector2i(town.origin.x + 2, town.origin.y + 2)])
+
+
+## Test aid: every nature piece loaded, in every colour, six cells apart in
+## rows across an empty town, then the props two apart along the last row.
+func _place_nature_samples() -> void:
+	var e := gen.edits
+	var y := town.height + 1
+	var per_row := (TownBuilder.SIZE - 6) / 6
+	var n := 0
+	for kind: int in TileLibrary.Nature.size():
+		for color in range(1, 9):
+			var id := TileLibrary.nature_id(kind, color)
+			if id < 0:
+				continue
+			e.set_cell(Vector3i(town.origin.x + 3 + (n % per_row) * 6, y, town.origin.y + 3 + (n / per_row) * 6), id, TileLibrary.rotation_index(0))
+			n += 1
+	var z := town.origin.y + TownBuilder.SIZE - 4
+	for prop: int in TileLibrary.Prop.size():
+		e.set_cell(Vector3i(town.origin.x + 3 + prop * 2, y, z), TileLibrary.prop_id(prop), TileLibrary.rotation_index(0))
+	print("selftest: %d nature samples from %s, %d per row" % [n, Vector2i(town.origin.x + 3, town.origin.y + 3), per_row])
 
 
 ## Simulates holding W for a while, then releasing, and reports whether the

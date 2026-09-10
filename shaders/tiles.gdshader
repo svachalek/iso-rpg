@@ -85,12 +85,11 @@ void fragment() {
 #ifdef CUTOUT
 	ALPHA = tex.a;
 	ALPHA_SCISSOR_THRESHOLD = 0.5;
+#endif
+#if defined(CUTOUT) || defined(NATURE)
 	if (!FRONT_FACING) {
 		NORMAL = -NORMAL;
 	}
-#endif
-#ifdef CANOPY
-	ALPHA = 0.9;  // a hint of what is under the foliage; shadows come from a twin item
 #endif
 #ifdef GLOW
 	EMISSION = tex.rgb * 1.6;  // flames
@@ -211,7 +210,14 @@ void fragment() {
 	// like overhead.
 	float slice_reach = has_own ? (in_rect(cellxz, own_building) ? 1.0 : 0.0)
 		: clamp((slice_radius - dxz) / slice_fade, 0.0, 1.0);
-	float sliced = (cell_y > slice_height ? 1.0 : 0.0) * slice_reach * slice_strength;
+#ifdef NATURE
+	// A tree is one item in its root cell, so cut it where the slice plane
+	// (the floor of the first hidden cell) crosses the trunk.
+	float over = world_pos.y > slice_height + 0.5 ? 1.0 : 0.0;
+#else
+	float over = cell_y > slice_height ? 1.0 : 0.0;
+#endif
+	float sliced = over * slice_reach * slice_strength;
 	cut = max(cut, sliced);
 	if (cut > 0.0) {
 		ivec2 px = ivec2(FRAGCOORD.xy) % 4;

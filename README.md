@@ -1,4 +1,4 @@
-# Iso
+# Iso-RPG
 
 An isometric RPG prototype in the spirit of Ultima V, built in Godot 4 with a
 continuous cube-tile world. Towns and battles happen in the same space at the
@@ -17,17 +17,24 @@ same scale; there is no zoom-in view.
   and the uphill neighbour's cubes show as a cliff face. Roofs use the
   same shapes. The character walks pieces with fractional stand heights,
   read from each loaded chunk's surface cells
-- Trees with cylindrical trunks and one canopy mesh each in four styles
-  (round, tall, wide, pine) with three leaf colours; invisible leaf filler
-  cells keep the canopy solid for the cover check. Canopies are slightly
-  translucent; since blended materials cannot cast shadows, each has a
-  shadow-only twin item one cell higher. Trees only grow on level ground.
-  Tree materials are exempt from the occluder cut, like furniture
+- Trees, bushes and boulders from the CC0 KayKit Forest Nature Pack
+  (assets/kaykit_nature, loaded at runtime like the furniture). A tree is
+  one item in the cell above its column, blocking movement, with the model
+  reaching up out of the cell; invisible leaf filler cells, measured from
+  each model when it loads, fill the cells its canopy reaches two or more
+  above its own so the cover check sees them. Trees stand a third larger
+  than the pack's metre, in the pack's three greens, with a few bare ones
+  among them, and only grow on level ground. Every piece sinks to the
+  ground: items come in five depths so a piece on a level slope stands at
+  its mean height. Nature materials are exempt from the occluder cut, like
+  furniture, and the slice cuts them by fragment rather than by cell
 - Soft shadows: the sun has an angular size and the directional shadow uses
   the highest soft filter quality, so shadow edges blur with distance
-- Ground props on a few percent of flat grass and sand columns: weeds and
-  flowers as crossed alpha-cutout quads, stone and pebble clusters. Props
-  are grid items in the cell above the surface and never block movement
+- Ground decorations on a few percent of flat or nearly level grass and
+  sand columns: tufts of grass and pebbles from the nature pack and flowers
+  as crossed alpha-cutout quads, which never block movement, and bushes
+  (thicker where the forest is dense) and boulders (on sand, and among the
+  trees), which do
 - Water is one translucent sheet per chunk covering water and beach columns,
   so there are no internal faces to sort. The lakebed ramps like the land,
   beaches slope into the shallows, and the waterline is the contour where the
@@ -171,6 +178,7 @@ Optional user args go after `--`:
     --at=X,Z              spawn at column X,Z (the first and last HUD cell coordinates) instead of the town gate
     --shapes              with --nowalk: lay out every shape and rotation by the gate
     --furniture           with --nowalk: an empty town with every furniture kind in four rotations
+    --nature              an empty town with every nature piece in every colour loaded, then the props
     --selftest            walk a short path, print stats, quit
     --screenshot=PATH     same as selftest, then save a PNG of the final frame
 
@@ -197,8 +205,8 @@ with `class_name` so the class cache exists):
 
 ## Layout
 
-    scripts/tile_library.gd   Tile enum, atlas painter, cube mesh builder, MeshLibrary
-    scripts/world_gen.gd      Noise terrain, trees, chunk fill, applies edits
+    scripts/tile_library.gd   Tile enum, atlas painter, cube mesh builder, model loader, MeshLibrary
+    scripts/world_gen.gd      Noise terrain, trees and decorations, chunk fill, applies edits
     scripts/world_edits.gd    Sparse height and cell overrides
     scripts/town_builder.gd   Site search and town layout as edits
     scripts/road_builder.gd   Roads and bridges as edits

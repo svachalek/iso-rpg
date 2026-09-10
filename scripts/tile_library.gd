@@ -5,16 +5,55 @@ extends RefCounted
 ## tile type, all drawing from a single procedurally painted texture atlas so
 ## that every octant of a GridMap collapses to one draw call per tile type.
 
-enum Tile { GRASS, DIRT, STONE, SAND, WATER, SNOW, TRUNK, LEAVES, PLANKS, GRAVEL, WALL, WINDOW, ROOF, CANOPY, CANOPY_TALL, CANOPY_WIDE, CANOPY_PINE, CANOPY_SHADOW, CANOPY_TALL_SHADOW, CANOPY_WIDE_SHADOW, CANOPY_PINE_SHADOW }
-const CANOPIES: Array[int] = [Tile.CANOPY, Tile.CANOPY_TALL, Tile.CANOPY_WIDE, Tile.CANOPY_PINE]
-## Visible canopies are alpha blended, which cannot cast shadows, so each has
-## an invisible shadow-only twin placed one cell higher (mesh offset back down).
-const CANOPY_SHADOW_OFFSET := 4  # twin id = canopy id + this
+enum Tile { GRASS, DIRT, STONE, SAND, WATER, SNOW, LEAVES, PLANKS, GRAVEL, WALL, WINDOW, ROOF }
 
-## Decorations placed in the empty cell above flat ground. They never block
-## movement: the pathfinder treats them as empty.
+## Decorations from the KayKit Forest Nature Pack (assets/kaykit_nature),
+## loaded at runtime like the furniture. Every piece stands in the cell
+## above the surface cell with its root sunk to the ground: `sink` is the
+## surface height in quarter cubes above the floor of the cell below (0 on a
+## bare cube top, up to 4 on a level piece), so id = base + kind * SINKS + sink.
+## Props (grass, flowers, pebbles) never block movement: the pathfinder
+## treats them as empty. Nature pieces (trees, bushes, boulders) block.
+const SINKS := 5
 const PROP_BASE := 60000  # above any shape * 100 + tile, below GridMap's 16-bit item limit
-enum Prop { WEEDS, FLOWERS_A, FLOWERS_B, STONES, PEBBLES }
+enum Prop { GRASS_A, GRASS_B, GRASS_C, GRASS_D, GRASS_TALL_A, GRASS_TALL_B, GRASS_TALL_C, GRASS_TALL_D,
+	FLOWERS_A, FLOWERS_B, PEBBLE_A, PEBBLE_B, PEBBLE_C, PEBBLES_A, PEBBLES_B }
+## file (pack model) or build (made here), and the colour set to load.
+const PROP_SPECS := {
+	Prop.GRASS_A: {"file": "Grass_1_A"},
+	Prop.GRASS_B: {"file": "Grass_1_B"},
+	Prop.GRASS_C: {"file": "Grass_1_C"},
+	Prop.GRASS_D: {"file": "Grass_1_D"},
+	Prop.GRASS_TALL_A: {"file": "Grass_2_A"},
+	Prop.GRASS_TALL_B: {"file": "Grass_2_B"},
+	Prop.GRASS_TALL_C: {"file": "Grass_2_C"},
+	Prop.GRASS_TALL_D: {"file": "Grass_2_D"},
+	Prop.FLOWERS_A: {"build": "flowers"},
+	Prop.FLOWERS_B: {"build": "flowers"},
+	Prop.PEBBLE_A: {"file": "Rock_2_A"},
+	Prop.PEBBLE_B: {"file": "Rock_6_A"},
+	Prop.PEBBLE_C: {"file": "Rock_6_B"},
+	Prop.PEBBLES_A: {"file": "Rock_5_A"},
+	Prop.PEBBLES_B: {"file": "Rock_5_B"},
+}
+## Blocking pieces. Trees carry a canopy: the cells the model reaches two or
+## more above its own (measured from the mesh when loaded) are filled with
+## invisible LEAVES so the cover check sees them. A tree's canopy may reach
+## at most NATURE_REACH cells sideways; the generator's border depends on it.
+const NATURE_BASE := PROP_BASE + 200
+const NATURE_REACH := 3
+enum Nature { TREE_1_A, TREE_1_B, TREE_2_A, TREE_2_B, TREE_2_C, TREE_2_D, TREE_3_A, TREE_3_B,
+	TREE_4_A, TREE_4_B, TREE_4_C, TREE_5_A, TREE_5_B, TREE_5_D, TREE_5_E,
+	TREE_6_A, TREE_6_B, TREE_6_C, TREE_7_A, TREE_7_B, TREE_7_C,
+	BARE_1_A, BARE_1_B, BARE_1_C, BARE_2_A, BARE_2_B, BARE_2_C,
+	BUSH_1_C, BUSH_1_D, BUSH_2_B, BUSH_2_C, BUSH_3_B, BUSH_4_B, BUSH_4_C,
+	ROCK_1_D, ROCK_1_E, ROCK_1_F, ROCK_2_C, ROCK_2_D, ROCK_3_E, ROCK_3_F, ROCK_5_C, ROCK_5_D, ROCK_6_C, ROCK_6_D }
+## The pack's colour variants (1 to 8) each tree comes in; other pieces load
+## colour 1 only. A tree's colour is chosen by the generator.
+const TREE_COLORS: Array[int] = [1, 2, 3]
+static var _nature_ids: Dictionary = {}  # kind * 8 + colour -> first item id (sink 0)
+static var _nature_canopy: Dictionary = {}  # tree kind -> Array[Vector3i] filler cell offsets
+static var _nature_next := NATURE_BASE
 
 ## Furniture: KayKit models (assets/kaykit_dungeon) loaded at runtime and
 ## scaled to the cube grid. An item occupies a footprint of whole cells from
@@ -157,7 +196,6 @@ const FACES := {
 	Tile.SAND: [Slot.SAND, Slot.SAND, Slot.SAND],
 	Tile.WATER: [Slot.WATER, Slot.WATER, Slot.WATER],
 	Tile.SNOW: [Slot.SNOW, Slot.SNOW, Slot.DIRT],
-	Tile.TRUNK: [Slot.TRUNK_TOP, Slot.TRUNK_SIDE, Slot.TRUNK_TOP],
 	Tile.LEAVES: [Slot.LEAVES, Slot.LEAVES, Slot.LEAVES],
 	Tile.PLANKS: [Slot.PLANKS, Slot.PLANKS, Slot.PLANKS],
 	Tile.GRAVEL: [Slot.GRAVEL, Slot.GRAVEL, Slot.GRAVEL],
@@ -193,12 +231,31 @@ static func is_partial(id: int) -> bool:
 	return id >= ID_STRIDE and id < PROP_BASE
 
 
-static func prop_id(prop: int) -> int:
-	return PROP_BASE + prop
+static func prop_id(prop: int, sink: int = 0) -> int:
+	return PROP_BASE + prop * SINKS + clampi(sink, 0, SINKS - 1)
 
 
 static func is_prop(id: int) -> bool:
-	return id >= PROP_BASE and id < FURNITURE_BASE
+	return id >= PROP_BASE and id < NATURE_BASE
+
+
+## Item id of a nature piece, or -1 if that kind was not loaded in that colour.
+static func nature_id(kind: int, color: int, sink: int = 0) -> int:
+	var first: int = _nature_ids.get(kind * 8 + color, -1)
+	return -1 if first < 0 else first + clampi(sink, 0, SINKS - 1)
+
+
+static func is_nature(id: int) -> bool:
+	return id >= NATURE_BASE and id < FURNITURE_BASE
+
+
+static func nature_is_tree(kind: int) -> bool:
+	return kind <= Nature.BARE_2_C
+
+
+## Filler cell offsets of a tree kind's canopy, relative to its own cell.
+static func nature_canopy(kind: int) -> Array:
+	return _nature_canopy.get(kind, [])
 
 
 static func furniture_id(kind: int) -> int:
@@ -244,7 +301,7 @@ static func furniture_back(k: int) -> Vector2i:
 ## Height of the feet above the cell floor when standing in this shape: the
 ## mean of its corner heights.
 static func stand_offset(id: int) -> float:
-	if is_prop(id) or is_furniture(id):
+	if is_prop(id) or is_nature(id) or is_furniture(id):
 		return 0.0
 	var shape := shape_of(id)
 	if shape < PATCH_FIRST:
@@ -397,62 +454,12 @@ static func build() -> MeshLibrary:
 	lib.set_item_shapes(Tile.WATER, [])
 	water_material = water
 
-	# Trees: a round trunk, invisible leaf filler cells that keep the canopy
-	# solid for cover checks, and one domed canopy mesh at the trunk top.
-	# Tree materials skip the cutout: trunks hide little, and cutting them
-	# per pixel made stump heights change as the character moved.
-	var tree_mat := _make_material(atlas, "")
-	tree_mat.set_shader_parameter("cutout_exempt", 1.0)
-	var canopy_mat := _make_material(atlas, "CANOPY")
-	canopy_mat.set_shader_parameter("cutout_exempt", 1.0)
-	# The trunk mesh reaches one cell below its own so it emerges from the
-	# slope piece or cube top beneath the first trunk cell.
-	lib.set_item_mesh(Tile.TRUNK, _build_cylinder(0.32, Slot.TRUNK_SIDE, Slot.TRUNK_TOP, 10, tree_mat, -1.5))
-	var trunk_shape := CylinderShape3D.new()
-	trunk_shape.radius = 0.32
-	trunk_shape.height = 1.0
-	lib.set_item_shapes(Tile.TRUNK, [trunk_shape, Transform3D.IDENTITY])
+	# Leaf filler cells: invisible, solid for the cover check.
 	lib.set_item_mesh(Tile.LEAVES, ArrayMesh.new())
 	lib.set_item_shapes(Tile.LEAVES, [])
-	var down := Vector3(0, -1, 0)
-	var canopies := {
-		Tile.CANOPY: [_build_cube_sphere(Vector3(2.6, 1.7, 2.6), Vector3(0, -0.4, 0), Slot.LEAVES, 4, canopy_mat),
-			_build_cube_sphere(Vector3(2.6, 1.7, 2.6), Vector3(0, -0.4, 0) + down, Slot.LEAVES, 4, opaque)],
-		Tile.CANOPY_TALL: [_build_cube_sphere(Vector3(1.8, 2.6, 1.8), Vector3(0, 0.4, 0), Slot.LEAVES_LIGHT, 4, canopy_mat),
-			_build_cube_sphere(Vector3(1.8, 2.6, 1.8), Vector3(0, 0.4, 0) + down, Slot.LEAVES_LIGHT, 4, opaque)],
-		Tile.CANOPY_WIDE: [_build_cube_sphere(Vector3(3.3, 1.3, 3.3), Vector3(0, -0.5, 0), Slot.LEAVES, 4, canopy_mat),
-			_build_cube_sphere(Vector3(3.3, 1.3, 3.3), Vector3(0, -0.5, 0) + down, Slot.LEAVES, 4, opaque)],
-		Tile.CANOPY_PINE: [_build_cone(2.3, -2.5, 3.2, Slot.LEAVES_DARK, 12, canopy_mat),
-			_build_cone(2.3, -3.5, 3.2, Slot.LEAVES_DARK, 12, opaque)],
-	}
-	for tile: int in canopies:
-		lib.create_item(tile)
-		lib.set_item_name(tile, Tile.keys()[tile])
-		lib.set_item_mesh(tile, canopies[tile][0])
-		lib.set_item_shapes(tile, [])
-		lib.set_item_mesh_cast_shadow(tile, RenderingServer.SHADOW_CASTING_SETTING_OFF)
-		var twin := tile + CANOPY_SHADOW_OFFSET
-		lib.create_item(twin)
-		lib.set_item_name(twin, Tile.keys()[twin])
-		lib.set_item_mesh(twin, canopies[tile][1])
-		lib.set_item_shapes(twin, [])
-		lib.set_item_mesh_cast_shadow(twin, RenderingServer.SHADOW_CASTING_SETTING_SHADOWS_ONLY)
 
-	# Ground props: crossed cutout quads for plants, pebble clusters for stones.
-	var props := {
-		Prop.WEEDS: _build_cross(Slot.WEEDS, 0.9, 0.7, cutout),
-		Prop.FLOWERS_A: _build_cross(Slot.FLOWERS_A, 0.9, 0.8, cutout),
-		Prop.FLOWERS_B: _build_cross(Slot.FLOWERS_B, 0.9, 0.8, cutout),
-		Prop.STONES: _build_stones([Vector3(0.28, 0.16, 0.22), Vector3(0.18, 0.12, 0.15), Vector3(0.14, 0.1, 0.12)], Slot.STONE, opaque),
-		Prop.PEBBLES: _build_stones([Vector3(0.16, 0.08, 0.13), Vector3(0.12, 0.07, 0.1)], Slot.GRAVEL, opaque),
-	}
-	for prop: int in props:
-		var id := prop_id(prop)
-		lib.create_item(id)
-		lib.set_item_name(id, "PROP_" + Prop.keys()[prop])
-		lib.set_item_mesh(id, props[prop])
-		lib.set_item_shapes(id, [])
-
+	_add_props(lib, cutout)
+	_add_nature(lib)
 	_add_furniture(lib, atlas)
 
 	_ensure_patches()
@@ -474,6 +481,147 @@ static func build() -> MeshLibrary:
 				mesh = _build_patch(corners, faces, mat)
 			_add_item(lib, item_id(PATCH_FIRST + i, tile), "%s_P%d" % [tile_name, i], mesh, _patch_hull(corners))
 	return lib
+
+
+## Loads a glTF model and merges every part into one mesh in model space.
+## Returns [mesh, albedo texture (or null)], or [] if the file cannot be read.
+static func _load_gltf(path: String) -> Array:
+	var doc := GLTFDocument.new()
+	var state := GLTFState.new()
+	if doc.append_from_file(path, state) != OK:
+		push_error("model: cannot load " + path)
+		return []
+	var root := doc.generate_scene(state)
+	var raw := SurfaceTool.new()
+	raw.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var tex: Texture2D = null
+	for mi: MeshInstance3D in root.find_children("*", "MeshInstance3D", true, false):
+		var xf := Transform3D.IDENTITY
+		var n: Node = mi
+		while n != null and n != root:
+			if n is Node3D:
+				xf = (n as Node3D).transform * xf
+			n = n.get_parent()
+		for si in mi.mesh.get_surface_count():
+			if tex == null:
+				var src := mi.mesh.surface_get_material(si) as BaseMaterial3D
+				if src != null:
+					tex = src.albedo_texture
+			raw.append_from(mi.mesh, si, xf)
+	root.free()
+	return [raw.commit(), tex]
+
+
+## A model placed in cell space: scaled, centred on the cell, its ground
+## plane (model y = 0) `depth` below the cell floor.
+static func _place_model(model: ArrayMesh, scale: float, depth: float, mat: Material) -> ArrayMesh:
+	var xf := Transform3D(Basis.from_scale(Vector3.ONE * scale), Vector3(0, -0.5 - depth, 0))
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	st.append_from(model, 0, xf)
+	st.set_material(mat)
+	return st.commit()
+
+
+## The material shared by the nature pack's pieces, made from the first
+## model loaded. Like furniture it is left alone by the occluder cut; the
+## slice cuts it by fragment, since a whole tree is one item in one cell.
+static var _nature_mat: ShaderMaterial = null
+const NATURE_SCALE := 1.0  # the pack's metre is our cube
+const TREE_SCALE := 1.3    # trees a little larger, to tower over a two-cube character
+
+static func _nature_material(tex: Texture2D) -> ShaderMaterial:
+	if _nature_mat == null:
+		_nature_mat = _make_material(tex, "NATURE")
+		_nature_mat.set_shader_parameter("cutout_exempt", 1.0)
+	return _nature_mat
+
+
+## Ground props: grass tufts and pebbles from the pack, flowers as crossed
+## cutout quads. One item per sink depth so each stands on its ground.
+static func _add_props(lib: MeshLibrary, cutout: Material) -> void:
+	for prop: int in PROP_SPECS:
+		var spec: Dictionary = PROP_SPECS[prop]
+		var model: ArrayMesh = null
+		var mat: Material = null
+		if spec.has("file"):
+			var loaded := _load_gltf("res://assets/kaykit_nature/%s_Color1.gltf" % spec["file"])
+			if loaded.is_empty():
+				continue
+			model = loaded[0]
+			mat = _nature_material(loaded[1])
+		for sink in SINKS:
+			var depth := 1.0 - 0.25 * sink
+			var mesh: ArrayMesh
+			if model != null:
+				mesh = _place_model(model, NATURE_SCALE, depth, mat)
+			else:
+				mesh = _build_cross(Slot.FLOWERS_A if prop == Prop.FLOWERS_A else Slot.FLOWERS_B, 0.9, 0.8, cutout, -depth)
+			var id := prop_id(prop, sink)
+			lib.create_item(id)
+			lib.set_item_name(id, "PROP_%s_%d" % [Prop.keys()[prop], sink])
+			lib.set_item_mesh(id, mesh)
+			lib.set_item_shapes(id, [])
+
+
+## Trees, bushes and boulders, each in its colours and sink depths.
+static func _add_nature(lib: MeshLibrary) -> void:
+	_nature_next = NATURE_BASE
+	for kind: int in Nature.size():
+		var file: String = Nature.keys()[kind]
+		if file.begins_with("BARE_"):
+			file = "Tree_" + file
+		file = file.capitalize().replace(" ", "_")  # ROCK_1_D -> Rock_1_D
+		var tree := nature_is_tree(kind)
+		var colors: Array[int] = TREE_COLORS if tree else ([1] as Array[int])
+		for color in colors:
+			var loaded := _load_gltf("res://assets/kaykit_nature/%s_Color%d.gltf" % [file, color])
+			if loaded.is_empty():
+				continue
+			var model: ArrayMesh = loaded[0]
+			var mat := _nature_material(loaded[1])
+			var scale := TREE_SCALE if tree else NATURE_SCALE
+			if tree and not _nature_canopy.has(kind):
+				_nature_canopy[kind] = _canopy_cells(model, kind, scale)
+			if _nature_next + SINKS > FURNITURE_BASE:
+				push_error("nature: out of item ids at " + file)
+				return
+			_nature_ids[kind * 8 + color] = _nature_next
+			for sink in SINKS:
+				var id := _nature_next + sink
+				lib.create_item(id)
+				lib.set_item_name(id, "NATURE_%s_%d_%d" % [Nature.keys()[kind], color, sink])
+				lib.set_item_mesh(id, _place_model(model, scale, 1.0 - 0.25 * sink, mat))
+				lib.set_item_shapes(id, [])
+			_nature_next += SINKS
+
+
+## The cells a tree's canopy reaches, two or more above its own cell (below
+## that is head room beside the trunk): every cell holding a vertex or the
+## centre of a triangle, with the tree standing at its deepest sink.
+static func _canopy_cells(model: ArrayMesh, kind: int, scale: float) -> Array[Vector3i]:
+	var arr := model.surface_get_arrays(0)
+	var verts: PackedVector3Array = arr[Mesh.ARRAY_VERTEX]
+	var idx: PackedInt32Array = arr[Mesh.ARRAY_INDEX]
+	var seen := {}
+	var cell_of := func(p: Vector3) -> Vector3i:
+		var q := p * scale + Vector3(0, -1.0, 0)
+		return Vector3i(roundi(q.x), floori(q.y), roundi(q.z))
+	for i in range(0, idx.size(), 3):
+		var a := verts[idx[i]]
+		var b := verts[idx[i + 1]]
+		var c := verts[idx[i + 2]]
+		for p: Vector3 in [a, b, c, (a + b + c) / 3.0]:
+			var cell: Vector3i = cell_of.call(p)
+			if cell.y >= 2:
+				seen[cell] = true
+	var out: Array[Vector3i] = []
+	for cell: Vector3i in seen:
+		if maxi(absi(cell.x), absi(cell.z)) > NATURE_REACH:
+			push_warning("nature: %s reaches %s, beyond NATURE_REACH" % [Nature.keys()[kind], cell])
+			continue
+		out.append(cell)
+	return out
 
 
 ## Loads every furniture model, merges its parts into one mesh under the
@@ -500,30 +648,12 @@ static func _add_furniture(lib: MeshLibrary, atlas: Texture2D) -> void:
 		if spec.has("build"):
 			built.append(kind)
 			continue
-		var path: String = "res://assets/kaykit_dungeon/%s.glb" % spec["file"]
-		var doc := GLTFDocument.new()
-		var state := GLTFState.new()
-		if doc.append_from_file(path, state) != OK:
-			push_error("furniture: cannot load " + path)
+		var loaded := _load_gltf("res://assets/kaykit_dungeon/%s.glb" % spec["file"])
+		if loaded.is_empty():
 			continue
-		var root := doc.generate_scene(state)
-		# Pass one: every part in model space, to measure it.
-		var raw := SurfaceTool.new()
-		raw.begin(Mesh.PRIMITIVE_TRIANGLES)
-		for mi: MeshInstance3D in root.find_children("*", "MeshInstance3D", true, false):
-			var xf := Transform3D.IDENTITY
-			var n: Node = mi
-			while n != null and n != root:
-				if n is Node3D:
-					xf = (n as Node3D).transform * xf
-				n = n.get_parent()
-			for si in mi.mesh.get_surface_count():
-				if _furniture_mat == null:
-					var src := mi.mesh.surface_get_material(si) as BaseMaterial3D
-					_make_furniture_mats(src.albedo_texture if src != null and src.albedo_texture != null else atlas)
-				raw.append_from(mi.mesh, si, xf)
-		root.free()
-		var model := raw.commit()
+		var model: ArrayMesh = loaded[0]
+		if _furniture_mat == null:
+			_make_furniture_mats(loaded[1] if loaded[1] != null else atlas)
 		var box := model.get_aabb()
 		# Pass two: scale and place in cell space (cell centre at the origin).
 		var s: float = spec.get("scale", FURNITURE_SCALE)
@@ -1183,17 +1313,15 @@ static func _patch_hull(corners: Array[float]) -> PackedVector3Array:
 
 
 ## `variant` is "" for plain, "WATER" for the translucent sheet, "CUTOUT"
-## for two-sided alpha-tested plants, or "CANOPY" for translucent foliage.
+## for two-sided alpha-tested plants, or "NATURE" for the pack's pieces.
 static func _make_material(atlas: Texture2D, variant: String) -> ShaderMaterial:
 	var code := FileAccess.get_file_as_string("res://shaders/tiles.gdshader")
 	if not variant.is_empty():
 		code = code.replace("shader_type spatial;", "shader_type spatial;\n#define " + variant)
-	if variant == "CUTOUT":
+	if variant == "CUTOUT" or variant == "NATURE":
+		# Two-sided: plants are single quads, and a tree cut by the slice
+		# shows the far wall of its trunk instead of a hollow.
 		code = code.replace("render_mode cull_back,", "render_mode cull_disabled,")
-	if variant == "CANOPY":
-		# Writes depth so overlapping domes sort and the x-ray silhouette
-		# (drawn later by render priority) still sees the canopy in front.
-		code = code.replace("render_mode cull_back,", "render_mode cull_back, depth_draw_always,")
 	var shader := Shader.new()
 	shader.code = code
 	var mat := ShaderMaterial.new()
@@ -1334,90 +1462,6 @@ static func add_water_patch(st: SurfaceTool, x: float, z: float, ys: Array[float
 	_quad(st, p, _slot_corners(Slot.WATER), n)
 
 
-## Cylinder along Y filling the cell height, textured with a side slot around
-## it and a cap slot on the ends mapped radially.
-static func _build_cylinder(radius: float, side: int, cap: int, segments: int, mat: Material, y0: float = -0.5) -> ArrayMesh:
-	var st := SurfaceTool.new()
-	st.begin(Mesh.PRIMITIVE_TRIANGLES)
-	st.set_material(mat)
-	var r := _slot_uv(side)
-	var c := _slot_uv(cap)
-	var centre := c.position + c.size * 0.5
-	for i in segments:
-		var a0 := TAU * i / segments
-		var a1 := TAU * (i + 1) / segments
-		var d0 := Vector3(cos(a0), 0, sin(a0))
-		var d1 := Vector3(cos(a1), 0, sin(a1))
-		var u0 := r.position.x + r.size.x * float(i) / segments
-		var u1 := r.position.x + r.size.x * float(i + 1) / segments
-		var top0 := d0 * radius + Vector3(0, 0.5, 0)
-		var top1 := d1 * radius + Vector3(0, 0.5, 0)
-		var bot0 := d0 * radius + Vector3(0, y0, 0)
-		var bot1 := d1 * radius + Vector3(0, y0, 0)
-		# Side quad with smooth radial normals, wound so the face points outward.
-		var pts: Array[Vector3] = [top0, top1, bot1, bot0]
-		var nrm: Array[Vector3] = [d0, d1, d1, d0]
-		var uvs: Array[Vector2] = [Vector2(u0, r.position.y), Vector2(u1, r.position.y), Vector2(u1, r.end.y), Vector2(u0, r.end.y)]
-		var face_n := (d0 + d1).normalized()
-		if (pts[1] - pts[0]).cross(pts[2] - pts[0]).dot(face_n) > 0.0:
-			pts.reverse()
-			nrm.reverse()
-			uvs.reverse()
-		for k in [0, 1, 2, 0, 2, 3]:
-			st.set_normal(nrm[k])
-			st.set_uv(uvs[k])
-			st.add_vertex(pts[k])
-		# Caps as fans.
-		var cu0 := centre + Vector2(cos(a0), sin(a0)) * c.size * 0.5
-		var cu1 := centre + Vector2(cos(a1), sin(a1)) * c.size * 0.5
-		_tri(st, [Vector3(0, 0.5, 0), top0, top1], [centre, cu0, cu1], Vector3.UP)
-		_tri(st, [Vector3(0, y0, 0), bot0, bot1], [centre, cu0, cu1], Vector3.DOWN)
-	return st.commit()
-
-
-## A cube subdivided n x n per face and pushed out to an ellipsoid, every
-## quad carrying the full texture slot so the atlas tiles across it.
-static func _build_cube_sphere(radii: Vector3, offset: Vector3, slot: int, n: int, mat: Material) -> ArrayMesh:
-	var st := SurfaceTool.new()
-	st.begin(Mesh.PRIMITIVE_TRIANGLES)
-	st.set_material(mat)
-	_add_cube_sphere(st, radii, offset, slot, n)
-	return st.commit()
-
-
-static func _add_cube_sphere(st: SurfaceTool, radii: Vector3, offset: Vector3, slot: int, n: int) -> void:
-	var uv := _slot_corners(slot)
-	var axes: Array[Array] = [
-		[Vector3.RIGHT, Vector3.UP, Vector3.BACK], [Vector3.LEFT, Vector3.UP, Vector3.FORWARD],
-		[Vector3.UP, Vector3.BACK, Vector3.RIGHT], [Vector3.DOWN, Vector3.FORWARD, Vector3.RIGHT],
-		[Vector3.BACK, Vector3.UP, Vector3.LEFT], [Vector3.FORWARD, Vector3.UP, Vector3.RIGHT],
-	]
-	for axis: Array in axes:
-		var fn: Vector3 = axis[0]
-		var fu: Vector3 = axis[1]
-		var fv: Vector3 = axis[2]
-		for j in n:
-			for i in n:
-				var pts: Array[Vector3] = []
-				var nrm: Array[Vector3] = []
-				for corner: Vector2 in [Vector2(i, j), Vector2(i + 1, j), Vector2(i + 1, j + 1), Vector2(i, j + 1)]:
-					var a := corner.x / n * 2.0 - 1.0
-					var b := corner.y / n * 2.0 - 1.0
-					var dir := (fn + fu * a + fv * b).normalized()
-					pts.append(dir * radii + offset)
-					nrm.append((dir / (radii * radii)).normalized())
-				var uvs: Array[Vector2] = [uv[0], uv[1], uv[2], uv[3]]
-				var face_n := (nrm[0] + nrm[1] + nrm[2] + nrm[3]).normalized()
-				if (pts[1] - pts[0]).cross(pts[2] - pts[0]).dot(face_n) > 0.0:
-					pts.reverse()
-					nrm.reverse()
-					uvs.reverse()
-				for k in [0, 1, 2, 0, 2, 3]:
-					st.set_normal(nrm[k])
-					st.set_uv(uvs[k])
-					st.add_vertex(pts[k])
-
-
 static func _paint_leaves_variant(img: Image, slot: int, base: Color, dark: Color, light: Color, rng: RandomNumberGenerator) -> void:
 	var o := _origin(slot)
 	for y in TILE_PX:
@@ -1463,50 +1507,18 @@ static func _paint_plant(img: Image, slot: int, flower_colors: Array, rng: Rando
 
 
 ## Two crossed vertical quads standing on the cell floor.
-static func _build_cross(slot: int, width: float, height: float, mat: Material) -> ArrayMesh:
+static func _build_cross(slot: int, width: float, height: float, mat: Material, y_off: float = 0.0) -> ArrayMesh:
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
 	st.set_material(mat)
 	var uv := _slot_corners(slot)
 	var hw := width * 0.5
-	var y0 := -0.5
-	var y1 := -0.5 + height
+	var y0 := -0.5 + y_off
+	var y1 := y0 + height
 	for d: Vector3 in [Vector3(1, 0, 1).normalized(), Vector3(1, 0, -1).normalized()]:
 		var a := d * hw
 		var n := Vector3(-d.z, 0, d.x)
 		_quad(st, [-a + Vector3(0, y1, 0), a + Vector3(0, y1, 0), a + Vector3(0, y0, 0), -a + Vector3(0, y0, 0)], uv, n)
-	return st.commit()
-
-
-## A few pebbles half sunk into the cell floor.
-static func _build_stones(radii: Array, slot: int, mat: Material) -> ArrayMesh:
-	var st := SurfaceTool.new()
-	st.begin(Mesh.PRIMITIVE_TRIANGLES)
-	st.set_material(mat)
-	var offsets: Array[Vector3] = [Vector3(-0.12, 0, 0.05), Vector3(0.2, 0, -0.15), Vector3(0.1, 0, 0.25)]
-	for i in radii.size():
-		var r: Vector3 = radii[i]
-		_add_cube_sphere(st, r, offsets[i] + Vector3(0, -0.5 + r.y * 0.45, 0), slot, 2)
-	return st.commit()
-
-
-## A cone standing on a base at height `base_y` in cell space.
-static func _build_cone(radius: float, base_y: float, height: float, slot: int, segments: int, mat: Material) -> ArrayMesh:
-	var st := SurfaceTool.new()
-	st.begin(Mesh.PRIMITIVE_TRIANGLES)
-	st.set_material(mat)
-	var uv := _slot_corners(slot)
-	var apex := Vector3(0, base_y + height, 0)
-	var centre := Vector3(0, base_y, 0)
-	for i in segments:
-		var a0 := TAU * i / segments
-		var a1 := TAU * (i + 1) / segments
-		var p0 := Vector3(cos(a0) * radius, base_y, sin(a0) * radius)
-		var p1 := Vector3(cos(a1) * radius, base_y, sin(a1) * radius)
-		var mid := Vector3(cos((a0 + a1) * 0.5), 0, sin((a0 + a1) * 0.5))
-		var n := (mid * height + Vector3(0, radius, 0)).normalized()
-		_tri(st, [apex, p1, p0], [Vector2((uv[0].x + uv[1].x) * 0.5, uv[0].y), uv[2], uv[3]], n)
-		_tri(st, [centre, p0, p1], [Vector2((uv[0].x + uv[1].x) * 0.5, uv[0].y), uv[3], uv[2]], Vector3.DOWN)
 	return st.commit()
 
 

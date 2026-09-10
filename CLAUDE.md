@@ -42,11 +42,17 @@ cannot use `call()`.
 
 - Hand-built props, walls and stairs follow the KayKit style: see
   `.claude/skills/style-pieces/SKILL.md` before adding one.
-- `assets/kaykit_dungeon` is `.gdignore`d and loaded at runtime with
-  `GLTFDocument`; do not let the editor import it. Keep `LICENSE.txt` there.
+- `assets/kaykit_dungeon` and `assets/kaykit_nature` are `.gdignore`d and
+  loaded at runtime with `GLTFDocument`; do not let the editor import them.
+  Keep `LICENSE.txt` there. The nature folder holds only the models in use,
+  copied from the full pack (`assets/KayKit_Forest_Nature_Pack_1.0_SOURCE`,
+  ignored by git and Godot); to add a model, copy its `.gltf` and `.bin`
+  from `Assets/gltf/ColorN` and name it in `Nature` or `PROP_SPECS`.
+  Colours 1 to 3 are greens, 4 teal, 5 and 6 autumn, 7 red, 8 pink.
 - GridMap item ids are 16-bit: shapes pack as `shape * 32 + tile` and must
   stay below `PROP_BASE`; adding corner range to the patch library (about
-  1500 shapes now) can overflow it.
+  1500 shapes now) can overflow it. Nature pieces take five ids each (one
+  per sink depth) per colour from `NATURE_BASE` up to `FURNITURE_BASE`.
 - Height fields snap to quarter cubes; pieces are chosen by best fit, so
   a column that looks wrong is usually a range problem in `surface_piece`.
 - Commit messages: one line summarising the change, then bullets of what

@@ -8,7 +8,7 @@ extends RefCounted
 const SEA_LEVEL := 6
 const STONE_LINE := 22
 const SNOW_LINE := 30
-const BORDER := 2  # extra columns generated around a chunk so trees can spill in
+const BORDER := TileLibrary.NATURE_REACH  # extra columns generated around a chunk so canopies can spill in
 
 const MAP_SIZE := 512  # material map texels, wrapping; must match the shader
 
@@ -229,49 +229,88 @@ static func _vertex_heights(heights_f: PackedFloat32Array, w: int) -> PackedFloa
 	return out
 
 
+## Mean height of a piece's surface above the floor of its cell `s`, in
+## quarter cubes (clamped to a cube): the sink depth for a decoration in
+## the cell above.
+static func _sink(c: Array[float], s: int) -> int:
+	return clampi(roundi(c[0] + c[1] + c[2] + c[3] - 4.0 * s), 0, 4)
+
+
 ## Corner heights of column (ix, iz) in the order (-x,-z), (+x,-z), (+x,+z), (-x,+z).
 static func _corners(verts: PackedFloat32Array, w: int, ix: int, iz: int) -> Array[float]:
 	var vw := w + 1
 	return [verts[iz * vw + ix], verts[iz * vw + ix + 1], verts[(iz + 1) * vw + ix + 1], verts[(iz + 1) * vw + ix]]
 
 
-## A sprinkling of weeds, flowers and stones on flat natural ground. Props
-## sit in the empty surface cell and are ignored by movement.
-func _place_prop(gm: GridMap, lx: int, lz: int, s: int, surf: int, wx: int, wz: int) -> void:
+## Decorations on natural ground: grass, flowers and pebbles that are walked
+## over, and bushes and boulders that block. `base` is the cell above the
+## surface cell and `sink` the surface height within the cell below it, in
+## quarter cubes (see TileLibrary). Bushes gather where the forest is dense,
+## boulders lie about on sand and among the trees.
+func _place_decoration(gm: GridMap, lx: int, lz: int, base: int, sink: int, surf: int, wx: int, wz: int) -> void:
 	if surf != TileLibrary.Tile.GRASS and surf != TileLibrary.Tile.SAND:
 		return
 	if edits.heights.has(Vector2i(wx, wz)):
 		return  # keep hand-shaped ground (towns) tidy
 	var r := _hash01(wx * 3 + 11, wz * 7 + 5)
+	var pick := _hash01(wx + 31, wz + 17)
+	var forest := clampf((_forest.get_noise_2d(wx, wz) + 0.1) * 2.0, 0.0, 1.0)
 	var prop := -1
+	var nature := -1
 	if surf == TileLibrary.Tile.GRASS:
-		if r < 0.05:
-			prop = TileLibrary.Prop.WEEDS
-		elif r < 0.07:
-			prop = TileLibrary.Prop.FLOWERS_A if _hash01(wx + 31, wz + 17) < 0.5 else TileLibrary.Prop.FLOWERS_B
-		elif r < 0.082:
-			prop = TileLibrary.Prop.STONES
+		if r < 0.06:
+			prop = TileLibrary.Prop.GRASS_A + int(pick * 8.0)
+		elif r < 0.075:
+			prop = TileLibrary.Prop.FLOWERS_A if pick < 0.5 else TileLibrary.Prop.FLOWERS_B
+		elif r < 0.085:
+			prop = TileLibrary.Prop.PEBBLE_A + int(pick * 5.0)
+		elif r < 0.085 + 0.03 * forest:
+			nature = BUSHES[int(pick * BUSHES.size())]
+		elif r < 0.09 + 0.03 * forest:
+			nature = BOULDERS[int(pick * BOULDERS.size())]
 	else:
-		if r < 0.035:
-			prop = TileLibrary.Prop.PEBBLES
-		elif r < 0.045:
-			prop = TileLibrary.Prop.STONES
-	if prop < 0:
-		return
-	var rot := int(_hash01(wx + 101, wz + 203) * 4.0)
-	gm.set_cell_item(Vector3i(lx, s, lz), TileLibrary.prop_id(prop), TileLibrary.rotation_index(rot))
+		if r < 0.03:
+			prop = TileLibrary.Prop.PEBBLE_A + int(pick * 5.0)
+		elif r < 0.04:
+			prop = TileLibrary.Prop.GRASS_A + int(pick * 4.0)
+		elif r < 0.055:
+			nature = BOULDERS[int(pick * BOULDERS.size())]
+	var rot := TileLibrary.rotation_index(int(_hash01(wx + 101, wz + 203) * 4.0))
+	if prop >= 0:
+		gm.set_cell_item(Vector3i(lx, base, lz), TileLibrary.prop_id(prop, sink), rot)
+	elif nature >= 0:
+		var id := TileLibrary.nature_id(nature, 1, sink)
+		if id >= 0:
+			gm.set_cell_item(Vector3i(lx, base, lz), id, rot)
 
 
-## Canopy style for the tree rooted at a column, by hash.
-func _canopy_for(x: int, z: int) -> int:
+const BUSHES: Array[int] = [TileLibrary.Nature.BUSH_1_C, TileLibrary.Nature.BUSH_1_D, TileLibrary.Nature.BUSH_2_B,
+	TileLibrary.Nature.BUSH_2_C, TileLibrary.Nature.BUSH_3_B, TileLibrary.Nature.BUSH_4_B, TileLibrary.Nature.BUSH_4_C]
+const BOULDERS: Array[int] = [TileLibrary.Nature.ROCK_1_D, TileLibrary.Nature.ROCK_1_E, TileLibrary.Nature.ROCK_1_F,
+	TileLibrary.Nature.ROCK_2_C, TileLibrary.Nature.ROCK_2_D, TileLibrary.Nature.ROCK_3_E, TileLibrary.Nature.ROCK_3_F,
+	TileLibrary.Nature.ROCK_5_C, TileLibrary.Nature.ROCK_5_D,
+	TileLibrary.Nature.ROCK_6_C, TileLibrary.Nature.ROCK_6_D]
+## Leafy trees by hash; a few bare ones among them.
+const LEAFY: Array[int] = [TileLibrary.Nature.TREE_1_A, TileLibrary.Nature.TREE_1_B, TileLibrary.Nature.TREE_2_A,
+	TileLibrary.Nature.TREE_2_B, TileLibrary.Nature.TREE_2_C, TileLibrary.Nature.TREE_2_D, TileLibrary.Nature.TREE_3_A,
+	TileLibrary.Nature.TREE_3_B, TileLibrary.Nature.TREE_4_A, TileLibrary.Nature.TREE_4_B, TileLibrary.Nature.TREE_4_C,
+	TileLibrary.Nature.TREE_5_A, TileLibrary.Nature.TREE_5_B, TileLibrary.Nature.TREE_5_D, TileLibrary.Nature.TREE_5_E,
+	TileLibrary.Nature.TREE_6_A, TileLibrary.Nature.TREE_6_B, TileLibrary.Nature.TREE_6_C, TileLibrary.Nature.TREE_7_A,
+	TileLibrary.Nature.TREE_7_B, TileLibrary.Nature.TREE_7_C]
+const BARE: Array[int] = [TileLibrary.Nature.BARE_1_A, TileLibrary.Nature.BARE_1_B, TileLibrary.Nature.BARE_1_C,
+	TileLibrary.Nature.BARE_2_A, TileLibrary.Nature.BARE_2_B, TileLibrary.Nature.BARE_2_C]
+
+
+## The tree rooted at a column: (kind, colour) by hash.
+func _tree_for(x: int, z: int) -> Vector2i:
 	var r := _hash01(x + 907, z + 613)
-	if r < 0.45:
-		return TileLibrary.Tile.CANOPY
-	if r < 0.65:
-		return TileLibrary.Tile.CANOPY_TALL
-	if r < 0.85:
-		return TileLibrary.Tile.CANOPY_WIDE
-	return TileLibrary.Tile.CANOPY_PINE
+	var kind: int
+	if r < 0.05:
+		kind = BARE[int(r * 20.0 * BARE.size()) % BARE.size()]
+	else:
+		kind = LEAFY[int((r - 0.05) / 0.95 * LEAFY.size()) % LEAFY.size()]
+	var colors := TileLibrary.TREE_COLORS
+	return Vector2i(kind, colors[int(_hash01(x + 409, z + 811) * colors.size()) % colors.size()])
 
 
 ## Ground the generator may decorate: not hand-shaped, not a road, not a
@@ -288,7 +327,7 @@ func is_natural_ground(x: int, z: int, h: int, river_dist: float = -1.0) -> bool
 	return river_dist >= RiverNetwork.HALF_WIDTH + 4.0
 
 
-## Trunk height of the tree rooted in this column, or 0 for none.
+## 1 when a tree is rooted in this column, else 0.
 func tree_at(x: int, z: int, h: int, river_dist: float = -1.0) -> int:
 	if not is_natural_ground(x, z, h, river_dist):
 		return 0
@@ -308,7 +347,7 @@ func tree_at(x: int, z: int, h: int, river_dist: float = -1.0) -> int:
 		for dx in range(-1, 2):
 			if (dx != 0 or dz != 0) and height_at(x + dx, z + dz) != h:
 				return 0
-	return 5 + int(_hash01(x + 7919, z + 104729) * 3.0)
+	return 1
 
 
 ## Negative when no tree wants this column; otherwise lower is stronger.
@@ -428,49 +467,39 @@ func fill_chunk(gm: GridMap, cx: int, cz: int, size: int) -> ChunkBuild:
 					ys.append(sum / count + 0.9)
 				TileLibrary.add_water_patch(water_st, lx, lz, ys)
 				water_quads += 1
-			# Props stand in the empty cell above the surface: on a bare cube
-			# top, or one cell up on a piece whose surface is close to that
-			# cell's floor (within a quarter cube) and nearly level.
+			# Decorations stand in the cell above the surface cell, sunk to
+			# the ground: a bare cube top, or a piece that is nearly level.
 			if trees[i] == 0 and top_cube > level:
 				if not has_piece:
-					_place_prop(gm, lx, lz, s, surf, ox + ix, oz + iz)
+					_place_decoration(gm, lx, lz, s, 0, surf, ox + ix, oz + iz)
 				else:
 					var c := _corners(verts, w, ix, iz)
-					var mean := (c[0] + c[1] + c[2] + c[3]) * 0.25 - float(s)
-					if c.max() - c.min() <= 0.5 and absf(mean - 1.0) <= 0.25:
-						_place_prop(gm, lx, lz, s + 1, surf, ox + ix, oz + iz)
+					if c.max() - c.min() <= 0.5:
+						_place_decoration(gm, lx, lz, s + 1, _sink(c, s), surf, ox + ix, oz + iz)
 
 	# Trees, including ones rooted just outside the chunk whose canopy spills
-	# in. The trunk starts in the cell above the surface cell and its mesh
-	# reaches one cell down, so it emerges from a slope piece or a cube top.
+	# in. The tree stands in the cell above the surface cell, sunk to the
+	# ground, and its canopy cells are filled with invisible leaves.
 	for tz in range(1, w - 1):
 		for tx in range(1, w - 1):
-			var th := trees[tz * w + tx]
-			if th == 0:
+			if trees[tz * w + tx] == 0:
 				continue
 			var lx := tx - BORDER
 			var lz := tz - BORDER
-			var base := scell[tz * w + tx] + 1
-			var top := base + th - 1
-			for dy in range(-1, 2):
-				for dz in range(-2, 3):
-					for dx in range(-2, 3):
-						var r := absi(dx) + absi(dz)
-						if r > 3 or (dy == 0 and r > 2) or (dy == 1 and r > 1):
-							continue
-						var px := lx + dx
-						var pz := lz + dz
-						if px < 0 or px >= size or pz < 0 or pz >= size:
-							continue
-						var c := Vector3i(px, top + dy, pz)
-						if gm.get_cell_item(c) == GridMap.INVALID_CELL_ITEM:
-							gm.set_cell_item(c, TileLibrary.Tile.LEAVES)
+			var i := tz * w + tx
+			var base := scell[i] + 1
+			var tree := _tree_for(ox + tx, oz + tz)
+			for off: Vector3i in TileLibrary.nature_canopy(tree.x):
+				var c := Vector3i(lx + off.x, base + off.y, lz + off.z)
+				if c.x < 0 or c.x >= size or c.z < 0 or c.z >= size:
+					continue
+				if gm.get_cell_item(c) == GridMap.INVALID_CELL_ITEM:
+					gm.set_cell_item(c, TileLibrary.Tile.LEAVES)
 			if lx >= 0 and lx < size and lz >= 0 and lz < size:
-				for y in range(base, base + th):
-					gm.set_cell_item(Vector3i(lx, y, lz), TileLibrary.Tile.TRUNK)
-				var canopy := _canopy_for(ox + tx, oz + tz)
-				gm.set_cell_item(Vector3i(lx, top + 1, lz), canopy)
-				gm.set_cell_item(Vector3i(lx, top + 2, lz), canopy + TileLibrary.CANOPY_SHADOW_OFFSET)
+				var sink := _sink(_corners(verts, w, tx, tz), scell[i]) if pieces[i].x >= 0 else 0
+				var id := TileLibrary.nature_id(tree.x, tree.y, sink)
+				if id >= 0:
+					gm.set_cell_item(Vector3i(lx, base, lz), id, TileLibrary.rotation_index(int(_hash01(ox + tx, oz + tz) * 4.0)))
 
 	# Hand edits win over everything generated.
 	var overrides := edits.chunk_cells(Vector2i(cx, cz))
