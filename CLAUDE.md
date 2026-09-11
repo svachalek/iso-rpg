@@ -83,5 +83,11 @@ cannot use `call()`.
   per sink depth) per colour from `NATURE_BASE` up to `FURNITURE_BASE`.
 - Height fields snap to quarter cubes; pieces are chosen by best fit, so
   a column that looks wrong is usually a range problem in `surface_piece`.
+- `WorldGen.fill_chunk` runs on a worker thread, writing into a
+  `WorldGen.Cells` that the chunk manager copies into a GridMap on the main
+  thread. Nothing it calls may touch the scene tree or physics (a GridMap
+  creates physics bodies as cells go in), and a lazily filled cache the
+  main thread also reads needs a lock, as `RiverNetwork._region` has.
+  `TileLibrary`'s static tables are filled at startup and only read after.
 - Commit messages: one line summarising the change, then bullets of what
   and why; no ticket numbers.

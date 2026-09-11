@@ -49,7 +49,9 @@ same scale; there is no zoom-in view.
   faces and on the exposed sides of surface cubes, darken wet sand, and fade
   the water sheet at the shore. Band edges match the tile rules exactly so
   the cubes and the map never disagree
-- 32 x 32 chunks streamed around the player, one GridMap per chunk
+- 32 x 32 chunks streamed around the player, one GridMap per chunk. Each
+  is generated on a worker thread, one at a time, and put in the scene on
+  the main thread when it is done, so walking never waits on one
 - Single procedurally painted texture atlas, nearest filtering, one material
 - Click-to-move with A* over stand cells; one-cube steps are walkable, water and trees are not
 - Orthographic camera at the isometric pitch, rotates in 90 degree steps

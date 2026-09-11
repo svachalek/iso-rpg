@@ -25,6 +25,10 @@ var _hash: Callable            # (x: int, z: int) -> float in 0..1
 var _sea_level: float
 var _rivers := {}   # Vector2i source tile -> PackedFloat32Array of x, z, level triplets (empty = no river)
 var _regions := {}  # Vector2i region -> Dictionary(bucket Vector2i -> Array[PackedFloat32Array])
+## Chunks generate on a worker thread while the game probes columns on the
+## main one, so the caches are locked; only while read or written, not
+## while filled, so a probe never waits for a river to be traced.
+var _lock := Mutex.new()
 
 
 func _init(smooth_height: Callable, hash01: Callable, sea_level: float) -> void:
@@ -38,9 +42,7 @@ func _init(smooth_height: Callable, hash01: Callable, sea_level: float) -> void:
 ## lowest level nearby wins so a tributary settles onto the river it joins.
 func probe(x: int, z: int) -> Vector2:
 	var rk := Vector2i(floori(float(x) / REGION), floori(float(z) / REGION))
-	if not _regions.has(rk):
-		_regions[rk] = _bucket_region(rk)
-	var buckets: Dictionary = _regions[rk]
+	var buckets := _region(rk)
 	var bx := floori(float(x) / BUCKET)
 	var bz := floori(float(z) / BUCKET)
 	var p := Vector2(x + 0.5, z + 0.5)
@@ -67,6 +69,21 @@ func probe(x: int, z: int) -> Vector2:
 	if lowest_near < INF:
 		level = lowest_near
 	return Vector2(best, level)
+
+
+## A region's buckets, gathered on first use.
+func _region(rk: Vector2i) -> Dictionary:
+	_lock.lock()
+	if _regions.has(rk):
+		var known: Dictionary = _regions[rk]
+		_lock.unlock()
+		return known
+	_lock.unlock()
+	var buckets := _bucket_region(rk)
+	_lock.lock()
+	_regions[rk] = buckets
+	_lock.unlock()
+	return buckets
 
 
 ## Segments of every river that can reach this region, in buckets.
@@ -104,8 +121,12 @@ func _add_segment(buckets: Dictionary, a: Vector2, b: Vector2, la: float, lb: fl
 ## The river rising in a source tile, traced once and cached. Empty when
 ## the tile has no source or its source is not on high enough ground.
 func _river_from_tile(tile: Vector2i) -> PackedFloat32Array:
+	_lock.lock()
 	if _rivers.has(tile):
-		return _rivers[tile]
+		var known: PackedFloat32Array = _rivers[tile]
+		_lock.unlock()
+		return known
+	_lock.unlock()
 	var pts := PackedFloat32Array()
 	if _hash.call(tile.x * 7 + 3, tile.y * 11 + 5) < SOURCE_CHANCE:
 		var sx := tile.x * SOURCE_TILE + int(_hash.call(tile.x, tile.y * 3) * SOURCE_TILE)
@@ -113,7 +134,9 @@ func _river_from_tile(tile: Vector2i) -> PackedFloat32Array:
 		var h: float = _smooth_height.call(float(sx), float(sz))
 		if h >= SOURCE_MIN_HEIGHT:
 			pts = _trace(Vector2(sx, sz), h)
+	_lock.lock()
 	_rivers[tile] = pts
+	_lock.unlock()
 	return pts
 
 

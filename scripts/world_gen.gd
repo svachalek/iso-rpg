@@ -45,7 +45,8 @@ var edits := WorldEdits.new()
 
 ## One texel per column, wrapping every MAP_SIZE cells: weights of grass,
 ## sand, stone and snow, with water as the remainder. Chunks paint their
-## columns as they build; the shader blends materials by sampling it.
+## columns as they build, and the chunk manager uploads it as it adds each
+## one to the scene; the shader blends materials by sampling it.
 var material_map := Image.create_empty(MAP_SIZE, MAP_SIZE, false, Image.FORMAT_RGBA8)
 var material_texture := ImageTexture.create_from_image(material_map)
 
@@ -56,6 +57,7 @@ var _forest := FastNoiseLite.new()
 var _worm := FastNoiseLite.new()     # cave passages follow its zero contour
 var _cavern := FastNoiseLite.new()   # caverns where it peaks
 var _entrances := {}   # Vector2i tile -> CaveEntrance, or null when the tile has none
+var _entrance_lock := Mutex.new()   # chunks generate on a worker thread (see fill_chunk)
 
 const RIVER_BANK_CELLS := 18.0   # how far beyond the channel the bank rule can reach
 
@@ -239,16 +241,43 @@ func _paint_material_map(heights: PackedInt32Array, heights_f: PackedFloat32Arra
 			var iz := lz + BORDER
 			material_map.set_pixel(posmod(ox + ix, MAP_SIZE), posmod(oz + iz, MAP_SIZE),
 				_material_weights(heights, heights_f, levels, w, ix, iz))
-	material_texture.update(material_map)
 
 
-## Result of building one chunk: its water sheet (or null) and the surface
-## cell of every column, the cell just above the topmost cube (which holds
-## the column's slope piece when it has one).
+## Result of building one chunk: its cells, its water sheet (or null), left
+## uncommitted for the main thread, and the surface cell of every column,
+## the cell just above the topmost cube (which holds the column's slope
+## piece when it has one).
 class ChunkBuild:
-	var water: Mesh
+	var cells := Cells.new()
+	var water: SurfaceTool
 	var surface: PackedInt32Array
 	var floors := {}  # column index -> PackedInt32Array of cave feet cells, lowest first
+
+
+## A chunk's cells as it is generated, with a GridMap's calls for them. A
+## GridMap cannot be filled off the main thread, since its octants create
+## physics bodies as cells go in; the chunk manager copies these into one.
+class Cells:
+	var _map := {}  # Vector3i -> item | orientation << 16
+
+	func set_cell_item(p: Vector3i, item: int, orientation: int = 0) -> void:
+		if item == GridMap.INVALID_CELL_ITEM:
+			_map.erase(p)
+		else:
+			_map[p] = item | (orientation << 16)
+
+	func get_cell_item(p: Vector3i) -> int:
+		var v: int = _map.get(p, -1)
+		return v if v < 0 else v & 0xFFFF
+
+	func get_cell_item_orientation(p: Vector3i) -> int:
+		var v: int = _map.get(p, -1)
+		return v if v < 0 else v >> 16
+
+	func apply_to(gm: GridMap) -> void:
+		for p: Vector3i in _map:
+			var v: int = _map[p]
+			gm.set_cell_item(p, v & 0xFFFF, v >> 16)
 
 
 ## The terrain surface is a heightfield on the grid vertices: each vertex is
@@ -289,7 +318,7 @@ static func _corners(verts: PackedFloat32Array, w: int, ix: int, iz: int) -> Arr
 ## surface cell and `sink` the surface height within the cell below it, in
 ## quarter cubes (see TileLibrary). Bushes gather where the forest is dense,
 ## boulders lie about on sand and among the trees.
-func _place_decoration(gm: GridMap, lx: int, lz: int, base: int, sink: int, surf: int, wx: int, wz: int) -> void:
+func _place_decoration(gm: Cells, lx: int, lz: int, base: int, sink: int, surf: int, wx: int, wz: int) -> void:
 	if surf != TileLibrary.Tile.GRASS and surf != TileLibrary.Tile.SAND:
 		return
 	if edits.heights.has(Vector2i(wx, wz)):
@@ -433,10 +462,15 @@ class CaveEntrance:
 
 
 ## The entrance in a tile, computed once: a few hashed candidate sites are
-## tried and the first that suits is kept.
+## tried and the first that suits is kept. The cache is locked only while
+## it is read or written, so no caller waits on another's search.
 func entrance_for_tile(tile: Vector2i) -> CaveEntrance:
+	_entrance_lock.lock()
 	if _entrances.has(tile):
-		return _entrances[tile]
+		var known: CaveEntrance = _entrances[tile]
+		_entrance_lock.unlock()
+		return known
+	_entrance_lock.unlock()
 	var e: CaveEntrance = null
 	if _hash01(tile.x * 13 + 7, tile.y * 17 + 3) < ENTRANCE_CHANCE:
 		for attempt in 12:
@@ -445,7 +479,9 @@ func entrance_for_tile(tile: Vector2i) -> CaveEntrance:
 			e = _try_entrance(Vector2i(sx, sz))
 			if e != null:
 				break
+	_entrance_lock.lock()
 	_entrances[tile] = e
+	_entrance_lock.unlock()
 	return e
 
 
@@ -627,8 +663,13 @@ func _hash01(x: int, z: int) -> float:
 	return float(n & 0xFFFFFF) / float(0xFFFFFF)
 
 
-## Populates an empty GridMap with the chunk at chunk coordinate (cx, cz).
-func fill_chunk(gm: GridMap, cx: int, cz: int, size: int) -> ChunkBuild:
+## Builds the chunk at chunk coordinate (cx, cz). Runs on a worker thread
+## while the game goes on: it must not touch the scene tree or physics, and
+## the caches it shares with the main thread (rivers, cave entrances) are
+## locked. It paints the material map, so only one chunk builds at a time.
+func fill_chunk(cx: int, cz: int, size: int) -> ChunkBuild:
+	var build := ChunkBuild.new()
+	var gm := build.cells
 	var w := size + BORDER * 2
 	var ox := cx * size - BORDER
 	var oz := cz * size - BORDER
@@ -841,8 +882,7 @@ func fill_chunk(gm: GridMap, cx: int, cz: int, size: int) -> ChunkBuild:
 		var v: Vector2i = overrides[local]
 		gm.set_cell_item(local, v.x, v.y)
 
-	var build := ChunkBuild.new()
-	build.water = water_st.commit() if water_quads > 0 else null
+	build.water = water_st if water_quads > 0 else null
 	build.surface = PackedInt32Array()
 	build.surface.resize(size * size)
 	for lz in size:
@@ -935,7 +975,7 @@ static func _mark_occluders(marks: Dictionary, seen: Vector3i, reach: int) -> vo
 ## open) or where the mouth's outcrop is built. Finally every cube that
 ## could hide a tunnel step is given its mask. Cave floors are recorded
 ## for the pathfinder.
-func _carve_caves(gm: GridMap, size: int, w: int, open: PackedByteArray, air: Dictionary, mound: Dictionary, steps: Dictionary, heights: PackedInt32Array, cave_floors: Dictionary) -> void:
+func _carve_caves(gm: Cells, size: int, w: int, open: PackedByteArray, air: Dictionary, mound: Dictionary, steps: Dictionary, heights: PackedInt32Array, cave_floors: Dictionary) -> void:
 	# The ground the tunnel is cut through. Rock elsewhere is a shell, which
 	# is all that can be seen of it, but the slice cuts a tunnel open at
 	# whatever depth the character has reached, and a shell has nothing to
