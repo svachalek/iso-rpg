@@ -92,14 +92,18 @@ enum Furniture { BED, BED_FANCY, BED_MAT, CHAIR, STOOL, TABLE, TABLE_FOOD, TABLE
 const FURNITURE_SCALE := 2.0 / 3.0  # the pack's 4-unit walls become 3 cubes; a bed spans 1 by 2 cells
 ## file, scale, footprint cells (w along x, d along z), then for wall items:
 ## wall = true, mount plane z in model units (which lands on the wall face),
-## y offset in model units, passable.
+## y offset in model units, passable. Seats and beds say where the character
+## goes on them, in cubes from the anchor cell's centre before rotation
+## (measured from the models): sit = Vector2(seat centre ahead of the cell
+## centre, away from the back, seat height); lie = the mattress top's centre,
+## the pillow toward -z.
 const FURNITURE_SPECS := {
-	Furniture.BED: {"file": "bed_frame", "size": Vector2i(1, 2)},
-	Furniture.BED_FANCY: {"file": "bed_decorated", "size": Vector2i(2, 2)},
-	Furniture.BED_MAT: {"file": "bed_floor", "size": Vector2i(1, 2)},
+	Furniture.BED: {"file": "bed_frame", "size": Vector2i(1, 2), "lie": Vector3(0, 0.56, 0.5)},
+	Furniture.BED_FANCY: {"file": "bed_decorated", "size": Vector2i(2, 2), "lie": Vector3(0.13, 0.56, 0.52)},
+	Furniture.BED_MAT: {"file": "bed_floor", "size": Vector2i(1, 2), "lie": Vector3(0, 0.23, 0.5)},
 	# The chair model's back is a quarter turn off the pack's usual -z.
-	Furniture.CHAIR: {"file": "chair", "size": Vector2i(1, 1), "turn": 1},
-	Furniture.STOOL: {"file": "stool", "size": Vector2i(1, 1)},
+	Furniture.CHAIR: {"file": "chair", "size": Vector2i(1, 1), "turn": 1, "sit": Vector2(0.07, 0.27)},
+	Furniture.STOOL: {"file": "stool", "size": Vector2i(1, 1), "sit": Vector2(0, 0.27)},
 	Furniture.TABLE: {"file": "table_small", "size": Vector2i(1, 1)},
 	Furniture.TABLE_FOOD: {"file": "table_small_decorated_A", "size": Vector2i(1, 1)},
 	Furniture.TABLE_DRINK: {"file": "table_small_decorated_B", "size": Vector2i(1, 1)},
@@ -493,6 +497,12 @@ static func rotation_index(k: int) -> int:
 			_rotation_index.append(gm.get_orthogonal_index_from_basis(Basis(Vector3.UP, i * PI / 2.0)))
 		gm.free()
 	return _rotation_index[posmod(k, 4)]
+
+
+## The quarter turns k for which rotation_index(k) is `orientation`.
+static func rotation_k(orientation: int) -> int:
+	rotation_index(0)  # fills the table
+	return maxi(_rotation_index.find(orientation), 0)
 
 
 static func build() -> MeshLibrary:

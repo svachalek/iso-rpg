@@ -28,6 +28,23 @@ const MAX_ANIM_RATE := 2.4
 const ANIM_BLEND := 0.15  # seconds
 const XRAY_STENCIL := 1  # the figure's own pixels; shaders/xray.gdshader skips them
 
+## Sitting on a seat or lying on a bed: the figure steps onto it, goes down,
+## idles there until asked to move, gets up and steps back to its cell.
+enum Rest { NONE, SIT, LIE }
+enum Phase { ON, DOWN, IDLE, UP, OFF }
+const REST_ANIMS := {
+	Rest.SIT: ["Sit_Chair_Down", "Sit_Chair_Idle", "Sit_Chair_StandUp"],
+	Rest.LIE: ["Lie_Down", "Lie_Idle", "Lie_StandUp"],
+}
+const REST_STEP_TIME := 0.3  # seconds to step onto or off a seat or bed
+## Where the figure stands to use one, in model units from the seat: sitting
+## down, the hips drop back SIT_BACK onto a surface SIT_HEIGHT up (the
+## height of the pack's own chairs); lying down, the body settles with its
+## middle, helmet to toes, LIE_BACK behind where the feet stood.
+const SIT_BACK := 0.40
+const SIT_HEIGHT := 0.40
+const LIE_BACK := 0.80
+
 var cell: Vector3i
 ## Multiplies SPEED; the caller raises it while a run key is held.
 var speed_scale := 1.0
@@ -44,6 +61,12 @@ var _body: Node3D
 var _xray: ShaderMaterial
 var _anim: AnimationPlayer
 var _yaw := 0.0  # the body turns toward this
+var _rest := Rest.NONE
+var _phase := Phase.ON
+var _phase_t := 0.0
+var _phase_len := 0.0
+var _rest_from := Vector3.ZERO
+var _rest_at := Vector3.ZERO
 
 
 func _ready() -> void:
@@ -84,7 +107,7 @@ func _add_model() -> void:
 	_anim = model.find_child("AnimationPlayer", true, false) as AnimationPlayer
 	if _anim == null:
 		return
-	for anim_name: String in [ANIM_IDLE, ANIM_MOVE]:
+	for anim_name: String in [ANIM_IDLE, ANIM_MOVE, REST_ANIMS[Rest.SIT][1], REST_ANIMS[Rest.LIE][1]]:
 		_anim.get_animation(anim_name).loop_mode = Animation.LOOP_LINEAR
 	_anim.play(ANIM_IDLE)
 
@@ -98,6 +121,79 @@ func _animate(moving: bool) -> void:
 	if _anim.current_animation != want:
 		_anim.play(want, ANIM_BLEND)
 	_anim.speed_scale = minf(SPEED * speed_scale / MOVE_ANIM_SPEED, MAX_ANIM_RATE) if moving else 1.0
+
+
+func is_resting() -> bool:
+	return _rest != Rest.NONE
+
+
+## Sits (seat: the middle of the seat's top) or lies down (seat: the middle
+## of the mattress), facing `face`: away from a chair's back, toward the
+## foot of a bed. The figure keeps its cell, the one beside the piece, and
+## steps back to it when it next moves.
+func rest(kind: Rest, seat: Vector3, face: Vector3) -> void:
+	_rest = kind
+	if kind == Rest.SIT:
+		_rest_at = seat + face * SIT_BACK * MODEL_SCALE - Vector3(0, SIT_HEIGHT * MODEL_SCALE, 0)
+	else:
+		_rest_at = seat + face * LIE_BACK * MODEL_SCALE
+	_rest_from = position
+	_yaw = atan2(-face.x, -face.z)
+	_enter(Phase.ON)
+
+
+## Starts a phase, and with it the animation that runs for its length. The
+## length is kept: an animation that does not loop clears itself from the
+## player when it ends, so it cannot be asked afterwards.
+func _enter(phase: Phase) -> void:
+	_phase = phase
+	_phase_t = 0.0
+	_phase_len = REST_STEP_TIME if phase == Phase.ON or phase == Phase.OFF else 0.0
+	if _anim == null:
+		return
+	_anim.speed_scale = 1.0
+	if phase == Phase.ON or phase == Phase.OFF:
+		_anim.play(ANIM_MOVE, ANIM_BLEND)
+		return
+	var anim_name: String = REST_ANIMS[_rest][phase - Phase.DOWN]
+	_anim.play(anim_name, ANIM_BLEND)
+	_phase_len = _anim.get_animation(anim_name).length
+
+
+func _process_rest(delta: float) -> void:
+	_phase_t += delta
+	_body.rotation.y = rotate_toward(_body.rotation.y, _yaw, TURN_SPEED * delta)
+	match _phase:
+		Phase.ON:
+			position = _rest_from.lerp(_rest_at, minf(_phase_t / REST_STEP_TIME, 1.0))
+			if _phase_t >= REST_STEP_TIME:
+				_enter(Phase.DOWN)
+		Phase.DOWN:
+			if _phase_t >= _phase_len:
+				_enter(Phase.IDLE)
+		Phase.IDLE:
+			if _path.is_empty() and step_provider.is_valid():
+				var n: Variant = step_provider.call()
+				if n != null:
+					_path.append(n)
+			if not _path.is_empty():
+				_enter(Phase.UP)
+		Phase.UP:
+			if _phase_t >= _phase_len:
+				_enter(Phase.OFF)
+		Phase.OFF:
+			position = _rest_at.lerp(pos_of(cell), minf(_phase_t / REST_STEP_TIME, 1.0))
+			if _phase_t >= REST_STEP_TIME:
+				_rest = Rest.NONE
+				_settle()
+
+
+## Stands on its cell, ready to walk whatever path it holds.
+func _settle() -> void:
+	position = pos_of(cell)
+	_from = position
+	_to = position
+	_t = 1.0
 
 
 ## One capsule around the figure, drawn only where it is hidden. A single
@@ -139,11 +235,9 @@ func pos_of(c: Vector3i) -> Vector3:
 
 func place(c: Vector3i) -> void:
 	cell = c
-	position = pos_of(c)
-	_from = position
-	_to = position
+	_rest = Rest.NONE
 	_path.clear()
-	_t = 1.0
+	_settle()
 
 
 func set_path(p: Array[Vector3i]) -> void:
@@ -155,6 +249,9 @@ func is_moving() -> bool:
 
 
 func _process(delta: float) -> void:
+	if _rest != Rest.NONE:
+		_process_rest(delta)
+		return
 	var remaining := delta
 	while remaining > 0.0:
 		if _t >= 1.0:

@@ -145,6 +145,15 @@ func get_cell(p: Vector3i) -> int:
 	return gm.get_cell_item(Vector3i(p.x - k.x * chunk_size, p.y, p.z - k.y * chunk_size))
 
 
+## Orientation of the item at a world cell, or -1 if empty or not loaded.
+func get_cell_orientation(p: Vector3i) -> int:
+	var k := chunk_of(p.x, p.z)
+	var gm: GridMap = _chunks.get(k)
+	if gm == null:
+		return -1
+	return gm.get_cell_item_orientation(Vector3i(p.x - k.x * chunk_size, p.y, p.z - k.y * chunk_size))
+
+
 ## The surface cell of a loaded column (the cell above its topmost cube),
 ## or -1 when the chunk is not loaded.
 func surface_cell(x: int, z: int) -> int:

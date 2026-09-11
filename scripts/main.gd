@@ -40,6 +40,7 @@ var _covered := false
 var _sun: DirectionalLight3D
 var _env: Environment
 var _torch: OmniLight3D
+var _rest_on_arrival: Variant = null  # feet cell of the seat or bed to use when the walk ends
 var _cave_fill: DirectionalLight3D
 var _figure_shadows := true
 const SUN_ENERGY := 1.3
@@ -112,7 +113,12 @@ func _ready() -> void:
 	player = Player.new()
 	player.name = "Player"
 	add_child(player)
-	player.arrived.connect(func() -> void: marker.visible = false)
+	player.arrived.connect(func() -> void:
+		marker.visible = false
+		if _rest_on_arrival != null:
+			var c: Vector3i = _rest_on_arrival
+			_rest_on_arrival = null
+			_try_rest.call_deferred(c))
 	player.step_provider = _key_step
 	player.feet_height = finder.feet_height
 	# The character's light underground: a warm pool a few cells across.
@@ -400,7 +406,96 @@ func _key_step() -> Variant:
 	var n: Variant = finder.step_target(player.cell, dx, dz)
 	if n != null:
 		marker.visible = false
+	elif dx == 0 or dz == 0:
+		# Walking into a seat or a bed uses it.
+		_try_rest(player.cell + Vector3i(dx, 0, dz))
 	return n
+
+
+## Sits on the seat or lies on the bed covering feet cell `c`, which the
+## figure stands beside. Returns whether there was one to use.
+func _try_rest(c: Vector3i) -> bool:
+	if player.is_resting() or player.is_moving():
+		return false
+	var f := finder.furniture_at(c)
+	if f.is_empty():
+		return false
+	var spec: Dictionary = TileLibrary.FURNITURE_SPECS[f[0]]
+	var anchor: Vector3i = f[1]
+	var k: int = f[2]
+	var b := TileLibrary.furniture_back(k)
+	var back := Vector3(b.x, 0, b.y)
+	var centre := Player.cell_center(anchor)
+	if spec.has("sit"):
+		var s: Vector2 = spec["sit"]
+		player.rest(Player.Rest.SIT, centre - back * s.x + Vector3(0, s.y, 0), -back)
+	elif spec.has("lie"):
+		# Facing the foot of the bed, to lie back toward the pillow.
+		player.rest(Player.Rest.LIE, centre + Basis(Vector3.UP, k * PI / 2.0) * (spec["lie"] as Vector3), -back)
+	else:
+		return false
+	marker.visible = false
+	return true
+
+
+## The seat or bed a click ray passes through on its way down to the floor
+## it hit at `hit` (furniture has no collision), as its feet cell, or null.
+func _rest_click(hit: Vector3, dir: Vector3) -> Variant:
+	var feet := floorf(hit.y + 0.01)
+	var p := hit
+	while p.y < feet + 1.0:
+		var c := Vector3i(p.floor())
+		c.y = int(feet)
+		var f := finder.furniture_at(c)
+		if not f.is_empty():
+			var spec: Dictionary = TileLibrary.FURNITURE_SPECS[f[0]]
+			if spec.has("sit") or spec.has("lie"):
+				return c
+		p -= dir * 0.1
+	return null
+
+
+## Walks beside the seat or bed covering feet cell `c`, to the free cell
+## beside it nearest the figure, and uses it on arrival.
+func _walk_to_rest(c: Vector3i) -> void:
+	var f := finder.furniture_at(c)
+	var anchor: Vector3i = f[1]
+	var footprint := {}
+	for o in TileLibrary.furniture_cells(f[0], f[2]):
+		footprint[anchor + Vector3i(o.x, 0, o.y)] = true
+	var spots: Array[Vector3i] = []  # [beside, piece cell] pairs
+	for cell: Vector3i in footprint:
+		for dz in range(-1, 2):
+			for dx in range(-1, 2):
+				# Diagonals count: a seat at a table often has only a corner free.
+				if dx == 0 and dz == 0:
+					continue
+				var n := cell + Vector3i(dx, 0, dz)
+				if footprint.has(n) or not finder.is_standable(n):
+					continue
+				spots.append(n)
+				spots.append(cell)
+	var best := -1
+	var best_d := INF
+	for i in range(0, spots.size(), 2):
+		var d := Vector3(spots[i] - player.cell).length_squared()
+		if d < best_d:
+			best = i
+			best_d = d
+	if best < 0:
+		_status = "No room to get to that."
+		return
+	var beside := spots[best]
+	if beside == player.cell:
+		_try_rest(spots[best + 1])
+		return
+	var path := finder.find_path(player.cell, beside)
+	if path.is_empty():
+		_status = "No path."
+		return
+	_status = "Path: %d steps" % path.size()
+	player.set_path(path)
+	_rest_on_arrival = spots[best + 1]
 
 
 ## Mirrors the shader's slice, occluder and cave-wall cuts, so clicks fall
@@ -563,13 +658,18 @@ func _physics_process(_delta: float) -> void:
 			from = hit.position + dir * 0.05
 			continue
 		var solid := Vector3i(inside.floor())
-		_walk_to(solid.x, solid.z, inside.y)
+		var rest: Variant = _rest_click(hit.position, dir)
+		if rest != null:
+			_walk_to_rest(rest)
+		else:
+			_walk_to(solid.x, solid.z, inside.y)
 		return
 
 
 ## Walks to column (x, z), to the floor nearest height `y` when the column
 ## has several (a house with an upstairs); by default the player's own.
 func _walk_to(x: int, z: int, y: float = NAN) -> void:
+	_rest_on_arrival = null
 	if is_nan(y):
 		y = finder.feet_height(player.cell)
 	var target: Variant = finder.stand_cell_near(x, z, y)
@@ -670,6 +770,28 @@ func _place_shape_samples() -> void:
 	print("selftest: shape samples: %d patch shapes from x=%d z=%d" % [n, x, z])
 
 
+## Test aid: the feet cell of the seat (or bed) nearest the figure, or null.
+func _nearest_rest(bed: bool) -> Variant:
+	var best: Variant = null
+	var best_d := INF
+	var at := player.cell
+	for dz in range(-40, 41):
+		for dx in range(-40, 41):
+			for dy in range(-1, 6):
+				var c := at + Vector3i(dx, dy, dz)
+				var t := finder.item(c)
+				if not TileLibrary.is_furniture(t):
+					continue
+				var spec: Dictionary = TileLibrary.FURNITURE_SPECS.get(t - TileLibrary.FURNITURE_BASE, {})
+				if not spec.has("lie" if bed else "sit"):
+					continue
+				var d := Vector3(c - at).length_squared()
+				if d < best_d:
+					best = c
+					best_d = d
+	return best
+
+
 ## Test aid: every furniture kind in its four rotations (backs to -z first,
 ## left to right) in rows down an empty town.
 func _place_furniture_samples() -> void:
@@ -755,6 +877,12 @@ func _run_selftest(shot: String) -> void:
 					push_error("selftest: no cave entrance to walk to")
 				else:
 					_walk_to(cave.landing.x, cave.landing.y, float(WorldGen.CAVE_Y))
+			elif a == "--walk=seat" or a == "--walk=bed":
+				var r: Variant = _nearest_rest(a == "--walk=bed")
+				if r == null:
+					push_error("selftest: no %s nearby" % a.trim_prefix("--walk="))
+				else:
+					_walk_to_rest(r)
 			else:
 				var parts := a.trim_prefix("--walk=").split(",")
 				_walk_to(int(parts[0]), int(parts[1]), float(parts[2]) if parts.size() > 2 else NAN)
@@ -763,6 +891,10 @@ func _run_selftest(shot: String) -> void:
 			while player.is_moving() and f < 4000:
 				await get_tree().process_frame
 				f += 1
+			if a == "--walk=seat" or a == "--walk=bed":
+				# Time to step on, go down and settle.
+				await get_tree().create_timer(5.0).timeout
+				print("selftest: resting %s" % player.is_resting())
 			print("selftest: at %s feet %.1f" % [player.cell, player.position.y])
 			if walks > 0:
 				continue  # more legs to walk; screenshot after the last

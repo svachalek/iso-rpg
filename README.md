@@ -11,7 +11,15 @@ same scale; there is no zoom-in view.
   its rig and animations), with a sword and shield. It idles when it stops
   and runs while it moves, turning toward each step; walking pace is
   already a run for its short legs, so the run plays faster to keep up with
-  the ground, up to a cap past which the feet slide a little
+  the ground, up to a cap past which the feet slide a little. Walking into a
+  chair, stool or bed, or clicking one, uses it: the figure steps onto the
+  seat or the mattress, sits or lies down, idles there, and gets up and
+  steps back to its own cell the moment it is asked to move again. A seat is
+  used facing away from its back, a bed with the head on the pillow; where
+  the figure goes on a piece is measured from the model (`sit` and `lie` in
+  `FURNITURE_SPECS`) and where it goes on the figure from the pose of the
+  pack's own animation. Its cell stays the one beside the piece, so
+  pathfinding and the cuts carry on as before
 - The ground surface is a heightfield on the grid vertices: each vertex is
   the mean of the continuous terrain height of the four columns around it,
   snapped to quarter cubes. Every column reads its four corners from that
@@ -229,6 +237,8 @@ Optional user args go after `--`:
     --at=X,Z[,Y]          spawn at column X,Z (the first and last HUD cell coordinates) instead of the town gate, on the floor nearest Y
     --cave                spawn before the mouth of the cave nearest the spawn point (the gate, or --at)
     --walk=cave           walk down that cave's tunnel to its landing
+    --walk=seat           walk to the nearest chair or stool and sit on it
+    --walk=bed            walk to the nearest bed and lie on it
     --shapes              with --nowalk: lay out every shape and rotation by the gate
     --furniture           with --nowalk: an empty town with every furniture kind in four rotations
     --nature              an empty town with every nature piece in every colour loaded, then the props
@@ -248,6 +258,7 @@ with `class_name` so the class cache exists):
 | W A S D or arrows | walk along the grid axes: W is up-right on screen, D down-right, S down-left, A up-left; two keys for a diagonal; hold to keep walking |
 | Shift | run: twice walking speed while held |
 | Left click | walk to the clicked column; clicks pass through sliced roofs and cut-down buildings |
+| Click or walk into a chair, stool or bed | sit or lie down on it; walking or clicking anywhere else gets up again |
 | Q / E | rotate camera 90 degrees |
 | Mouse wheel | zoom, on top of the auto zoom |
 | Z | toggle the auto zoom: the camera closes in by 1.4x inside the town wall and 2x indoors, easing over 0.4 s |

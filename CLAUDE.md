@@ -78,6 +78,17 @@ cannot use `call()`.
   ignored by git and Godot); to add a model, copy its `.gltf` and `.bin`
   from `Assets/gltf/ColorN` and name it in `Nature` or `PROP_SPECS`.
   Colours 1 to 3 are greens, 4 teal, 5 and 6 autumn, 7 red, 8 pink.
+- Sitting and lying: a piece says where the figure goes on it with `sit` or
+  `lie` in `FURNITURE_SPECS`, in cubes from the anchor cell's centre before
+  rotation (the model's own measurements, at `FURNITURE_SCALE`); the figure
+  brings the other half, `Player.SIT_BACK`, `SIT_HEIGHT` and `LIE_BACK`,
+  measured from the animation's pose at `MODEL_SCALE`. Check either with
+  `--walk=seat` or `--walk=bed`, which walk to the nearest one and use it.
+  Furniture has no collision, so a click on it hits the floor behind: the
+  seat or bed is found by walking back up the ray (`_rest_click`). An
+  animation that does not loop clears `AnimationPlayer.current_animation`
+  when it ends, so a phase's length must be kept when it starts, not asked
+  for afterwards.
 - GridMap item ids are 16-bit: shapes pack as `shape * 32 + tile` and must
   stay below `PROP_BASE`; adding corner range to the patch library (about
   1500 shapes now) can overflow it. Nature pieces take five ids each (one

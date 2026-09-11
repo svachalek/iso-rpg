@@ -220,6 +220,38 @@ func find_path(start: Vector3i, goal: Vector3i) -> Array[Vector3i]:
 	return out
 
 
+## The piece of furniture covering cell `c` as [kind, anchor cell, k], k
+## being the quarter turns it was placed with (its back toward
+## TileLibrary.furniture_back(k)), or [] if there is none. A piece fills
+## the rest of its footprint with filler, so a filler cell looks for the
+## anchor whose footprint covers it.
+func furniture_at(c: Vector3i) -> Array:
+	var own := _piece(c)
+	if not own.is_empty() or item(c) != TileLibrary.FURNITURE_FILL:
+		return own
+	for dz in range(-1, 2):
+		for dx in range(-1, 2):
+			var p := _piece(c + Vector3i(dx, 0, dz))
+			if p.is_empty():
+				continue
+			for o in TileLibrary.furniture_cells(p[0], p[2]):
+				if o == Vector2i(-dx, -dz):
+					return p
+	return []
+
+
+func _piece(a: Vector3i) -> Array:
+	var t := item(a)
+	if not TileLibrary.is_furniture(t) or t == TileLibrary.FURNITURE_FILL or t == TileLibrary.FURNITURE_FILL_PASSABLE:
+		return []
+	var kind := t - TileLibrary.FURNITURE_BASE
+	var spec: Dictionary = TileLibrary.FURNITURE_SPECS.get(kind, {})
+	if spec.is_empty():
+		return []
+	var turn: int = spec.get("turn", 0)
+	return [kind, a, posmod(TileLibrary.rotation_k(_cm.get_cell_orientation(a)) - turn, 4)]
+
+
 func _step_ok(from: Vector3i, col: Vector2i, by_col: Dictionary) -> bool:
 	if not by_col.has(col):
 		return false
