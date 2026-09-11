@@ -14,7 +14,10 @@ same scale; there is no zoom-in view.
   the ground, up to a cap past which the feet slide a little. Walking into a
   chair, stool or bed, or clicking one, uses it: the figure steps onto the
   seat or the mattress, sits or lies down, idles there, and gets up and
-  steps back to its own cell the moment it is asked to move again. A seat is
+  steps back to its own cell the moment it is asked to move again. Getting
+  up is that move: a tapped key only stands the figure up, since its cell
+  is the square it came from, while a held key walks on and a click walks
+  its path once the figure is up. A seat is
   used facing away from its back, a bed with the head on the pillow; where
   the figure goes on a piece is measured from the model (`sit` and `lie` in
   `FURNITURE_SPECS`) and where it goes on the figure from the pose of the

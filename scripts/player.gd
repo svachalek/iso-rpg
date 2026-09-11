@@ -172,11 +172,13 @@ func _process_rest(delta: float) -> void:
 			if _phase_t >= _phase_len:
 				_enter(Phase.IDLE)
 		Phase.IDLE:
-			if _path.is_empty() and step_provider.is_valid():
-				var n: Variant = step_provider.call()
-				if n != null:
-					_path.append(n)
-			if not _path.is_empty():
+			# Getting up is itself the step out of the seat, so a tapped key
+			# only stands the figure up; its own cell is a square away. A
+			# held key walks on from there, and a path from a click is kept.
+			var asked := not _path.is_empty()
+			if not asked and step_provider.is_valid():
+				asked = step_provider.call() != null
+			if asked:
 				_enter(Phase.UP)
 		Phase.UP:
 			if _phase_t >= _phase_len:
