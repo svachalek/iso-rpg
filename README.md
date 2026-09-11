@@ -28,8 +28,10 @@ same scale; there is no zoom-in view.
   ground: items come in five depths so a piece on a level slope stands at
   its mean height. Nature materials are exempt from the occluder cut, like
   furniture, and the slice cuts them by fragment rather than by cell
-- Soft shadows: the sun has an angular size and the directional shadow uses
-  the highest soft filter quality, so shadow edges blur with distance
+- Soft shadows: the sun has an angular size, so shadow edges blur with
+  distance. The shadow atlas is 4096 at medium soft filter quality, with
+  no MSAA: at Retina density these look the same as 8192, ultra and 2x
+  MSAA for much less GPU time
 - Ground decorations on a few percent of flat or nearly level grass and
   sand columns: tufts of grass and pebbles from the nature pack and flowers
   as crossed alpha-cutout quads, which never block movement, and bushes

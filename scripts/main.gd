@@ -181,6 +181,9 @@ func _setup_environment() -> void:
 	sun.rotation_degrees = Vector3(-55, -35, 0)
 	sun.light_energy = 1.3
 	sun.shadow_enabled = true
+	# Four splits even though the camera is orthographic: one spreads the map
+	# over the camera's whole depth, and small shadows (a chimney's on its
+	# roof) break up into grain.
 	sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_4_SPLITS
 	sun.directional_shadow_max_distance = 200.0
 	# A visibly sized sun gives soft, distance-dependent shadow edges.
