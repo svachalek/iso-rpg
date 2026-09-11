@@ -1,12 +1,32 @@
 class_name Player
 extends Node3D
 
-## A two-cube-tall figure that walks a list of feet cells.
+## A two-cube-tall figure that walks a list of feet cells: the knight from
+## the KayKit Adventurers pack, loaded at runtime with its rig and animations.
 
 signal arrived
 
 const SPEED := 4.0  # world units per second
 const RUN_SCALE := 2.0
+const TURN_SPEED := 14.0  # radians per second
+
+const MODEL := "res://assets/kaykit_adventurers/Knight.glb"
+const MODEL_SCALE := 0.8  # the knight stands about 2.5 with its helmet
+## The model carries every weapon and shield in the pack; these are shown.
+const GEAR := ["1H_Sword", "Badge_Shield"]
+const GEAR_ALL := ["1H_Sword", "1H_Sword_Offhand", "2H_Sword", "Badge_Shield",
+		"Rectangle_Shield", "Round_Shield", "Spike_Shield"]
+const ANIM_IDLE := "Idle"
+const ANIM_MOVE := "Running_A"
+## Ground speed at which a planted foot of ANIM_MOVE stays put at
+## MODEL_SCALE, measured from the rig. Even walking pace is a run for legs
+## this short: the pack's walk only covers about 0.6.
+const MOVE_ANIM_SPEED := 2.3
+## The move animation plays faster to keep up with the ground, to a point:
+## past it the feet blur, and sliding a little reads better.
+const MAX_ANIM_RATE := 2.4
+const ANIM_BLEND := 0.15  # seconds
+const XRAY_STENCIL := 1  # the figure's own pixels; shaders/xray.gdshader skips them
 
 var cell: Vector3i
 ## Multiplies SPEED; the caller raises it while a run key is held.
@@ -22,6 +42,8 @@ var _to := Vector3.ZERO
 var _t := 1.0
 var _body: Node3D
 var _xray: ShaderMaterial
+var _anim: AnimationPlayer
+var _yaw := 0.0  # the body turns toward this
 
 
 func _ready() -> void:
@@ -30,45 +52,61 @@ func _ready() -> void:
 	_xray = ShaderMaterial.new()
 	_xray.shader = load("res://shaders/xray.gdshader")
 	_xray.render_priority = 10
-
-	var tunic := StandardMaterial3D.new()
-	tunic.albedo_color = Color(0.25, 0.35, 0.75)
-	var skin := StandardMaterial3D.new()
-	skin.albedo_color = Color(0.90, 0.72, 0.58)
-	var boots := StandardMaterial3D.new()
-	boots.albedo_color = Color(0.30, 0.20, 0.12)
-
-	_add_box(Vector3(0.5, 0.35, 0.3), Vector3(0, 0.175, 0), boots)
-	_add_box(Vector3(0.55, 0.85, 0.32), Vector3(0, 0.775, 0), tunic)
-	var head := MeshInstance3D.new()
-	var sphere := SphereMesh.new()
-	sphere.radius = 0.24
-	sphere.height = 0.48
-	head.mesh = sphere
-	head.material_override = skin
-	head.position = Vector3(0, 1.5, 0)
-	_body.add_child(head)
-	# A nose so facing is readable from above.
-	_add_box(Vector3(0.1, 0.1, 0.12), Vector3(0, 1.5, -0.26), skin)
+	_add_model()
 	_add_xray_shell()
 
 
-func _add_box(size: Vector3, at: Vector3, mat: Material) -> void:
-	var mi := MeshInstance3D.new()
-	var box := BoxMesh.new()
-	box.size = size
-	mi.mesh = box
-	mi.material_override = mat
-	mi.position = at
-	_body.add_child(mi)
+func _add_model() -> void:
+	var doc := GLTFDocument.new()
+	var state := GLTFState.new()
+	if doc.append_from_file(MODEL, state) != OK:
+		push_error("player: cannot load " + MODEL)
+		return
+	var model := doc.generate_scene(state) as Node3D
+	# glTF faces +z; the body faces -z, the way look_at points it.
+	model.rotation.y = PI
+	model.scale = Vector3.ONE * MODEL_SCALE
+	_body.add_child(model)
+	for gear: String in GEAR_ALL:
+		var n := model.find_child(gear, true, false) as Node3D
+		if n != null:
+			n.visible = gear in GEAR
+	# Where the knight shows, it marks the stencil so the x-ray shell leaves
+	# it be: the helmet and shield stand out of the shell, in front of it.
+	for mi: MeshInstance3D in model.find_children("*", "MeshInstance3D", true, false):
+		for si in mi.mesh.get_surface_count():
+			var mat := mi.mesh.surface_get_material(si) as BaseMaterial3D
+			if mat != null:
+				mat.stencil_mode = BaseMaterial3D.STENCIL_MODE_CUSTOM
+				mat.stencil_flags = BaseMaterial3D.STENCIL_FLAG_WRITE
+				mat.stencil_compare = BaseMaterial3D.STENCIL_COMPARE_ALWAYS
+				mat.stencil_reference = XRAY_STENCIL
+	_anim = model.find_child("AnimationPlayer", true, false) as AnimationPlayer
+	if _anim == null:
+		return
+	for anim_name: String in [ANIM_IDLE, ANIM_MOVE]:
+		_anim.get_animation(anim_name).loop_mode = Animation.LOOP_LINEAR
+	_anim.play(ANIM_IDLE)
 
 
-## One capsule that encloses the whole figure, drawn only where it is hidden.
-## A single convex shell avoids the body parts x-raying through each other.
+## Runs while the figure moves and idles when it stops, the run sped up to
+## keep pace with the ground.
+func _animate(moving: bool) -> void:
+	if _anim == null:
+		return
+	var want := ANIM_MOVE if moving else ANIM_IDLE
+	if _anim.current_animation != want:
+		_anim.play(want, ANIM_BLEND)
+	_anim.speed_scale = minf(SPEED * speed_scale / MOVE_ANIM_SPEED, MAX_ANIM_RATE) if moving else 1.0
+
+
+## One capsule around the figure, drawn only where it is hidden. A single
+## convex shell avoids the body parts x-raying through each other; what
+## sticks out of it is kept clear by the stencil.
 func _add_xray_shell() -> void:
 	var mi := MeshInstance3D.new()
 	var capsule := CapsuleMesh.new()
-	capsule.radius = 0.36
+	capsule.radius = 0.46  # about as wide as the helmet, so the silhouette fits the figure
 	capsule.height = 2.0
 	mi.mesh = capsule
 	mi.material_override = _xray
@@ -139,6 +177,8 @@ func _process(delta: float) -> void:
 			if _path.is_empty():
 				arrived.emit()
 	position = _from.lerp(_to, _t)
+	_body.rotation.y = rotate_toward(_body.rotation.y, _yaw, TURN_SPEED * delta)
+	_animate(_t < 1.0)
 
 
 func _begin_step(next: Vector3i) -> void:
@@ -149,4 +189,4 @@ func _begin_step(next: Vector3i) -> void:
 	var dir := _to - _from
 	dir.y = 0.0
 	if dir.length_squared() > 0.001:
-		_body.look_at(global_position + dir, Vector3.UP)
+		_yaw = atan2(-dir.x, -dir.z)  # the yaw that points -z along dir

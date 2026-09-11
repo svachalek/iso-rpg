@@ -6,7 +6,12 @@ same scale; there is no zoom-in view.
 
 ## Milestone 1 (current)
 
-- 1 m cubes on a grid, character two cubes tall
+- 1 m cubes on a grid, character two cubes tall: the knight from the CC0
+  KayKit Adventurers pack (assets/kaykit_adventurers, loaded at runtime with
+  its rig and animations), with a sword and shield. It idles when it stops
+  and runs while it moves, turning toward each step; walking pace is
+  already a run for its short legs, so the run plays faster to keep up with
+  the ground, up to a cap past which the feet slide a little
 - The ground surface is a heightfield on the grid vertices: each vertex is
   the mean of the continuous terrain height of the four columns around it,
   snapped to quarter cubes. Every column reads its four corners from that
@@ -260,7 +265,7 @@ with `class_name` so the class cache exists):
     scripts/road_builder.gd   Roads and bridges as edits
     scripts/chunk_manager.gd  Chunk streaming, world cell lookup
     scripts/pathfinder.gd     Stand-cell rules and A* over feet cells, cave floors, upper floors and stairs included
-    scripts/player.gd         Walking figure
+    scripts/player.gd         Walking figure: the knight model and its animations
     scripts/camera_rig.gd     Isometric orthographic camera
     scripts/main.gd           Wiring, input, HUD, self-test, shader globals
     shaders/tiles.gdshader    Atlas lookup plus the knock-down, occluder cuts, cave walls and slice
