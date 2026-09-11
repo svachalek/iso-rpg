@@ -5,7 +5,25 @@ extends RefCounted
 ## tile type, all drawing from a single procedurally painted texture atlas so
 ## that every octant of a GridMap collapses to one draw call per tile type.
 
-enum Tile { GRASS, DIRT, STONE, SAND, WATER, SNOW, LEAVES, PLANKS, GRAVEL, WALL, WINDOW, ROOF }
+enum Tile { GRASS, DIRT, STONE, SAND, WATER, SNOW, LEAVES, PLANKS, GRAVEL, WALL, WINDOW, ROOF, ROCK, CAVE_FLOOR }
+
+## Cave rock comes in cubes with a mask of the camera yaws they stand on
+## the line of sight to a passage for, baked into the vertex colour so the
+## shader can knock them down, and a shape for their four vertical edges.
+## An edge is square; ROUND where the rock juts out into a passage, which
+## cuts it back to a quarter column; or coved where it stands at an inside
+## corner of one, which fills the angle with a quarter round tangent to
+## both walls. A cove is halved along the corner's diagonal between the
+## two cubes that make the angle, each carrying the half against its own
+## face (COVE_IN across the face it is come to along, COVE_OUT across the
+## one it is left along), so a cove is knocked down with the wall it
+## belongs to and never stands on its own. The corner codes are reduced to
+## one canonical rotation each, as patches are, and the cube is turned
+## with rotation_index; ids run sixteen masks to the shape from ROCK_BASE,
+## which is above every other id.
+enum RockCorner { SQUARE, ROUND, COVE_IN, COVE_OUT }
+const ROCK_BASE := 62000  # 70 shapes of 16 masks, inside GridMap's 16 bits
+const ROCK_SQUARE := 0    # the shape with four square corners
 
 ## Decorations from the KayKit Forest Nature Pack (assets/kaykit_nature),
 ## loaded at runtime like the furniture. Every piece stands in the cell
@@ -181,9 +199,12 @@ static var _rotation_index := PackedInt32Array()
 ## Material for the per-chunk water sheet, set by build().
 static var water_material: ShaderMaterial
 static var _patch_lookup := {}  # (cap: bool, mask) -> Vector2i(shape, k)
+## Cave rock corner codes: canonical rotations, and every rotation of them.
+static var _rock_shapes: Array[PackedInt32Array] = []
+static var _rock_index := {}  # PackedInt32Array corners -> Vector2i(shape, k)
 
 ## Slots in the atlas. 4 columns x 4 rows of TILE_PX squares.
-enum Slot { GRASS_TOP, GRASS_SIDE, DIRT, STONE, SAND, WATER, SNOW, TRUNK_SIDE, TRUNK_TOP, LEAVES, PLANKS, GRAVEL, PLASTER, WINDOW, ROOF, LEAVES_DARK, LEAVES_LIGHT, WEEDS, FLOWERS_A, FLOWERS_B }
+enum Slot { GRASS_TOP, GRASS_SIDE, DIRT, STONE, SAND, WATER, SNOW, TRUNK_SIDE, TRUNK_TOP, LEAVES, PLANKS, GRAVEL, PLASTER, WINDOW, ROOF, LEAVES_DARK, LEAVES_LIGHT, WEEDS, FLOWERS_A, FLOWERS_B, ROCK, CAVE_FLOOR }
 
 const ATLAS_COLS := 8  # 8 x 8 slots of TILE_PX; the shader assumes the same
 const TILE_PX := 32
@@ -202,6 +223,8 @@ const FACES := {
 	Tile.WALL: [Slot.PLASTER, Slot.PLASTER, Slot.PLASTER],
 	Tile.WINDOW: [Slot.PLASTER, Slot.WINDOW, Slot.PLASTER],
 	Tile.ROOF: [Slot.ROOF, Slot.ROOF, Slot.ROOF],
+	Tile.ROCK: [Slot.ROCK, Slot.ROCK, Slot.ROCK],
+	Tile.CAVE_FLOOR: [Slot.CAVE_FLOOR, Slot.ROCK, Slot.ROCK],
 }
 
 
@@ -216,6 +239,50 @@ static func item_id(shape: int, tile: int) -> int:
 
 static func slab_id(tile: int) -> int:
 	return item_id(patch_shape([2, 2, 2, 2]), tile)
+
+
+## A cave rock cube with the given sides open to a passage, in the shape
+## whose corners rock_piece found.
+static func rock_id(mask: int, shape: int = ROCK_SQUARE) -> int:
+	return ROCK_BASE + shape * 16 + mask
+
+
+static func is_rock(id: int) -> bool:
+	return id >= ROCK_BASE
+
+
+static func rock_mask(id: int) -> int:
+	return (id - ROCK_BASE) % 16
+
+
+static func rock_shape(id: int) -> int:
+	return (id - ROCK_BASE) / 16
+
+
+## The cube for four corner codes (RockCorner, in corner order), as
+## Vector2i(shape, quarter turns).
+static func rock_piece(corners: PackedInt32Array) -> Vector2i:
+	_ensure_rock_shapes()
+	return _rock_index[corners]
+
+
+## Every combination of corner codes, one canonical rotation each.
+static func _ensure_rock_shapes() -> void:
+	if not _rock_shapes.is_empty():
+		return
+	for a in 4:
+		for b in 4:
+			for c in 4:
+				for d in 4:
+					var q := PackedInt32Array([a, b, c, d])
+					if _rock_index.has(q):
+						continue
+					var shape := _rock_shapes.size()
+					_rock_shapes.append(q)
+					for k in 4:
+						var r := _rotate_corners(q, k)
+						if not _rock_index.has(r):
+							_rock_index[r] = Vector2i(shape, k)
 
 
 static func shape_of(id: int) -> int:
@@ -263,7 +330,7 @@ static func furniture_id(kind: int) -> int:
 
 
 static func is_furniture(id: int) -> bool:
-	return id >= FURNITURE_BASE
+	return id >= FURNITURE_BASE and id < ROCK_BASE
 
 
 ## Ignored by movement: ground props, and furniture hung high on a wall.
@@ -301,7 +368,7 @@ static func furniture_back(k: int) -> Vector2i:
 ## Height of the feet above the cell floor when standing in this shape: the
 ## mean of its corner heights.
 static func stand_offset(id: int) -> float:
-	if is_prop(id) or is_nature(id) or is_furniture(id):
+	if is_prop(id) or is_nature(id) or is_furniture(id) or is_rock(id):
 		return 0.0
 	var shape := shape_of(id)
 	if shape < PATCH_FIRST:
@@ -457,6 +524,24 @@ static func build() -> MeshLibrary:
 	# Leaf filler cells: invisible, solid for the cover check.
 	lib.set_item_mesh(Tile.LEAVES, ArrayMesh.new())
 	lib.set_item_shapes(Tile.LEAVES, [])
+
+	# Cave rock: the knock-down reads each cube's open sides from its colour.
+	var cave := _make_material(atlas, "")
+	cave.set_shader_parameter("knockdown", 3.0)
+	var rock_faces: Array = FACES[Tile.ROCK]
+	_ensure_rock_shapes()
+	for shape in _rock_shapes.size():
+		var q := _rock_shapes[shape]
+		# A cut-back corner takes its own hull, so a click beside a rounded
+		# column falls on the floor; a groove is left to the hull, which
+		# closes over it, so a click in one still finds the rock.
+		var cont: Array[bool] = []
+		var hull := _rock_hull(_rock_outline(q, cont))
+		for mask in 16:
+			var open := Color(float(mask & 1), float((mask >> 1) & 1), float((mask >> 2) & 1), float((mask >> 3) & 1))
+			var mesh := _build_cube(rock_faces[0], rock_faces[1], rock_faces[2], cave, open) if shape == ROCK_SQUARE \
+				else _build_rock_cube(rock_faces, cave, open, q)
+			_add_item(lib, rock_id(mask, shape), "ROCK_%d_%d" % [shape, mask], mesh, hull)
 
 	_add_props(lib, cutout)
 	_add_nature(lib)
@@ -1332,16 +1417,133 @@ static func _make_material(atlas: Texture2D, variant: String) -> ShaderMaterial:
 
 # --- Mesh -------------------------------------------------------------------
 
-static func _build_cube(top: int, side: int, bottom: int, mat: Material) -> ArrayMesh:
+static func _build_cube(top: int, side: int, bottom: int, mat: Material, color := Color(0, 0, 0, 0)) -> ArrayMesh:
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
 	st.set_material(mat)
+	st.set_color(color)
 	_add_face(st, Vector3.UP, Vector3.FORWARD, top)
 	_add_face(st, Vector3.DOWN, Vector3.BACK, bottom)
 	_add_face(st, Vector3.FORWARD, Vector3.UP, side)
 	_add_face(st, Vector3.BACK, Vector3.UP, side)
 	_add_face(st, Vector3.LEFT, Vector3.UP, side)
 	_add_face(st, Vector3.RIGHT, Vector3.UP, side)
+	return st.commit()
+
+
+## The curves on a rock cube's corners: how far back one that juts out
+## into a passage is cut, how far along the wall a cove reaches, and the
+## flats a quarter turn is cut into, which keep the pack's chunky look.
+const ROCK_ROUND := 0.35
+const ROCK_COVE := 0.45
+const ROCK_FACETS := 4
+
+
+## The x-z outline of a rock cube with the given corner codes, counter-
+## clockwise from corner 0. `cont` takes one entry per point: whether the
+## edge leaving it carries on the texture run of the edge before it, as
+## the flats of one arc do.
+static func _rock_outline(corners: PackedInt32Array, cont: Array[bool]) -> Array[Vector2]:
+	var out: Array[Vector2] = []
+	for i in 4:
+		var p := Vector2(CORNER_X[i], CORNER_Z[i])
+		var s := Vector2(signf(p.x), signf(p.y))
+		# The corner is come to along one face and left along the other;
+		# even corners are come to along the face at constant x.
+		var in_x := i % 2 == 0
+		match corners[i]:
+			RockCorner.SQUARE:
+				out.append(p)
+				cont.append(false)
+			RockCorner.ROUND:
+				# An arc about a centre set in from the corner, so it runs
+				# tangent into both faces.
+				var c := p - s * ROCK_ROUND
+				var on_x := Vector2(p.x, c.y)
+				var on_z := Vector2(c.x, p.y)
+				_rock_arc(out, cont, c, on_x if in_x else on_z, on_z if in_x else on_x, ROCK_ROUND)
+			_:
+				# Half a cove: tangent to the wall the open face is in at
+				# ROCK_COVE from the corner, and running from there to the
+				# corner's diagonal, where the other half meets it.
+				var open_x := (corners[i] == RockCorner.COVE_IN) == in_x
+				var normal := Vector2(s.x, 0.0) if open_x else Vector2(0.0, s.y)
+				var along := Vector2(0.0, -s.y) if open_x else Vector2(-s.x, 0.0)
+				var c := p + (normal + along) * ROCK_COVE
+				var tangent := p + along * ROCK_COVE
+				var middle := c + (p - c).normalized() * ROCK_COVE
+				if corners[i] == RockCorner.COVE_IN:
+					_rock_arc(out, cont, c, tangent, middle, ROCK_COVE)
+					out.append(p)
+					cont.append(false)
+				else:
+					out.append(p)
+					cont.append(false)
+					_rock_arc(out, cont, c, middle, tangent, ROCK_COVE)
+	return out
+
+
+## Appends the flats of an arc about `centre` from `a` to `b`, the short
+## way round. Only the flats after the first carry on the texture run.
+static func _rock_arc(out: Array[Vector2], cont: Array[bool], centre: Vector2, a: Vector2, b: Vector2, r: float) -> void:
+	var from := (a - centre).angle()
+	var to := from + wrapf((b - centre).angle() - from, -PI, PI)
+	for j in ROCK_FACETS + 1:
+		out.append(centre + Vector2.from_angle(lerpf(from, to, float(j) / float(ROCK_FACETS))) * r)
+		cont.append(j > 0 and j < ROCK_FACETS)
+
+
+static func _rock_hull(outline: Array[Vector2]) -> PackedVector3Array:
+	var pts := PackedVector3Array()
+	for p: Vector2 in outline:
+		pts.append(Vector3(p.x, 0.5, p.y))
+		pts.append(Vector3(p.x, -0.5, p.y))
+	return pts
+
+
+## A cave rock cube with curved corners: its outline extruded a cube high,
+## the top and bottom on their slots and a quad per edge on the side slot,
+## the texture running along it at one slot to the cell.
+static func _build_rock_cube(faces: Array, mat: Material, color: Color, corners: PackedInt32Array) -> ArrayMesh:
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	st.set_material(mat)
+	st.set_color(color)
+	var cont: Array[bool] = []
+	var outline := _rock_outline(corners, cont)
+	var n := outline.size()
+	var top := _slot_uv(faces[0])
+	var bottom := _slot_uv(faces[2])
+	# A cove makes the outline reflex, so the caps are ear-clipped rather
+	# than fanned.
+	var tris := Geometry2D.triangulate_polygon(PackedVector2Array(outline))
+	for t in tris.size() / 3:
+		var hi: Array[Vector3] = []
+		var lo: Array[Vector3] = []
+		var uv_top: Array[Vector2] = []
+		var uv_bottom: Array[Vector2] = []
+		for j in 3:
+			var q := outline[tris[t * 3 + j]]
+			hi.append(Vector3(q.x, 0.5, q.y))
+			lo.append(Vector3(q.x, -0.5, q.y))
+			# A cove reaches past the cell; hold its texture to the slot.
+			var uv := Vector2(clampf(q.x + 0.5, 0.0, 1.0), clampf(q.y + 0.5, 0.0, 1.0))
+			uv_top.append(top.position + top.size * uv)
+			uv_bottom.append(bottom.position + bottom.size * uv)
+		_tri(st, hi, uv_top, Vector3.UP)
+		_tri(st, lo, uv_bottom, Vector3.DOWN)
+	var u := 0.0
+	for i in n:
+		var a := outline[i]
+		var b := outline[(i + 1) % n]
+		var d := b - a
+		if d.length() < 0.001:
+			continue  # two arcs meeting on one face leave no edge between them
+		var u0 := u if cont[i] else 0.0
+		var u1 := minf(u0 + d.length(), 1.0)
+		u = u1
+		_quad(st, [Vector3(a.x, 0.5, a.y), Vector3(b.x, 0.5, b.y), Vector3(b.x, -0.5, b.y), Vector3(a.x, -0.5, a.y)],
+			_slot_corners(faces[1], u0, 0.0, u1, 1.0), Vector3(d.y, 0.0, -d.x).normalized())
 	return st.commit()
 
 
@@ -1559,6 +1761,8 @@ static func _paint_atlas() -> ImageTexture:
 	_paint_plant(img, Slot.WEEDS, [], rng)
 	_paint_plant(img, Slot.FLOWERS_A, [Color(0.9, 0.25, 0.2), Color(0.95, 0.8, 0.2)], rng)
 	_paint_plant(img, Slot.FLOWERS_B, [Color(0.95, 0.95, 0.95), Color(0.7, 0.45, 0.9)], rng)
+	_paint_rock(img, rng)
+	_paint_cave_floor(img, rng)
 
 	img.generate_mipmaps()
 	return ImageTexture.create_from_image(img)
@@ -1602,6 +1806,39 @@ static func _paint_stone(img: Image, rng: RandomNumberGenerator) -> void:
 		for y in h:
 			for x in w:
 				img.set_pixel(o.x + px + x, o.y + py + y, _jitter(Color(shade, shade, shade + 0.02), 0.03, rng))
+
+
+## Cave rock: dark blue-grey with a few lighter slabs and cracks.
+static func _paint_rock(img: Image, rng: RandomNumberGenerator) -> void:
+	_speckle(img, Slot.ROCK, Color(0.30, 0.31, 0.35), 0.04, rng)
+	var o := _origin(Slot.ROCK)
+	for i in 6:
+		var w := rng.randi_range(4, 9)
+		var h := rng.randi_range(3, 6)
+		var px := rng.randi_range(0, TILE_PX - w)
+		var py := rng.randi_range(0, TILE_PX - h)
+		var shade := rng.randf_range(0.26, 0.40)
+		for y in h:
+			for x in w:
+				img.set_pixel(o.x + px + x, o.y + py + y, _jitter(Color(shade, shade + 0.01, shade + 0.05), 0.03, rng))
+	for i in 5:
+		var x := rng.randi_range(0, TILE_PX - 1)
+		var y := rng.randi_range(0, TILE_PX - 8)
+		for k in rng.randi_range(4, 8):
+			img.set_pixel(o.x + clampi(x + (k % 3) - 1, 0, TILE_PX - 1), o.y + y + k, Color(0.18, 0.18, 0.22))
+
+
+## Cave floor: dark grit with pale flecks.
+static func _paint_cave_floor(img: Image, rng: RandomNumberGenerator) -> void:
+	_speckle(img, Slot.CAVE_FLOOR, Color(0.36, 0.33, 0.31), 0.05, rng)
+	var o := _origin(Slot.CAVE_FLOOR)
+	for i in 30:
+		var px := rng.randi_range(0, TILE_PX - 2)
+		var py := rng.randi_range(0, TILE_PX - 2)
+		var shade := rng.randf_range(0.28, 0.48)
+		for y in 2:
+			for x in 2:
+				img.set_pixel(o.x + px + x, o.y + py + y, _jitter(Color(shade, shade - 0.02, shade - 0.03), 0.02, rng))
 
 
 static func _paint_water(img: Image, rng: RandomNumberGenerator) -> void:

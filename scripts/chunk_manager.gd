@@ -12,6 +12,7 @@ var mesh_library: MeshLibrary
 
 var _chunks := {}  # Vector2i -> GridMap
 var _surfaces := {}  # Vector2i -> PackedInt32Array of surface cells per column
+var _floors := {}    # Vector2i -> Dictionary(column index -> PackedInt32Array of cave feet cells)
 var _pending: Array[Vector2i] = []
 var _center := Vector2i(1 << 20, 1 << 20)
 
@@ -63,6 +64,7 @@ func update_center(world_pos: Vector3) -> void:
 			_chunks[k].queue_free()
 			_chunks.erase(k)
 			_surfaces.erase(k)
+			_floors.erase(k)
 
 
 func load_all_pending() -> void:
@@ -90,6 +92,7 @@ func _load_next() -> void:
 		gm.add_child(sheet)
 	_chunks[k] = gm
 	_surfaces[k] = build.surface
+	_floors[k] = build.floors
 
 
 ## Tile at a world cell, or GridMap.INVALID_CELL_ITEM if empty or not loaded.
@@ -109,6 +112,13 @@ func surface_cell(x: int, z: int) -> int:
 	if cells.is_empty():
 		return -1
 	return cells[(z - k.y * chunk_size) * chunk_size + (x - k.x * chunk_size)]
+
+
+## The cave feet cells of a loaded column, lowest first (empty if none).
+func floor_cells(x: int, z: int) -> PackedInt32Array:
+	var k := chunk_of(x, z)
+	var floors: Dictionary = _floors.get(k, {})
+	return floors.get((z - k.y * chunk_size) * chunk_size + (x - k.x * chunk_size), PackedInt32Array())
 
 
 func is_loaded_at(x: int, z: int) -> bool:

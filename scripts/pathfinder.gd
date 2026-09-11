@@ -41,8 +41,9 @@ func is_partial(c: Vector3i) -> bool:
 
 ## A two-cube-tall character can stand with its feet in cell `c`: either the
 ## cell is empty over a solid cube, or it holds a slab or wedge with room
-## above. Wading is allowed only up to the ankles.
-func is_standable(c: Vector3i) -> bool:
+## above. On the surface, wading is allowed only up to the ankles; cave
+## floors lie under the sea and skip the check.
+func is_standable(c: Vector3i, on_surface: bool = true) -> bool:
 	var t := item(c)
 	var ok := false
 	if t == GridMap.INVALID_CELL_ITEM or TileLibrary.is_passable(t):
@@ -51,8 +52,8 @@ func is_standable(c: Vector3i) -> bool:
 		ok = is_empty(c + Vector3i.UP) and is_empty(c + Vector3i.UP * 2)
 		if ok and TileLibrary.stand_offset(t) > 1.0:
 			ok = is_empty(c + Vector3i.UP * 3)
-	if not ok:
-		return false
+	if not ok or not on_surface:
+		return ok
 	return feet_height(c) >= float(_gen.water_level_at(c.x, c.z)) + 0.9 - MAX_WADE
 
 
@@ -102,14 +103,19 @@ func is_floor(c: Vector3i) -> bool:
 	return TileLibrary.is_partial(t) and TileLibrary.tile_of(t) == TileLibrary.Tile.PLANKS
 
 
-## Every feet cell in a column, lowest first: the ground level, then each
-## upper floor or stair step above it.
+## Every feet cell in a column, lowest first: the cave floors and tunnel
+## steps below ground, the ground level, then each upper floor or stair
+## step above it.
 func stand_cells(x: int, z: int) -> Array[Vector3i]:
 	var out: Array[Vector3i] = []
 	var s := _cm.surface_cell(x, z)
 	if s < 0:
 		return out
 	var g: Variant = stand_cell(x, z)
+	for y in _cm.floor_cells(x, z):
+		var c := Vector3i(x, y, z)
+		if (g == null or c != g) and is_standable(c, false):
+			out.append(c)
 	if g != null:
 		out.append(g)
 	for y in range(s + 1, s + FLOOR_SCAN + 1):

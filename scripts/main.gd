@@ -25,6 +25,7 @@ var _cutout_on := true
 const ZOOM_OUTDOORS := 22.0
 const ZOOM_TOWN := 16.0
 const ZOOM_INDOORS := 11.0
+const ZOOM_CAVE := 14.0
 var _auto_zoom_on := true
 var _cutout_strength := 0.0
 var _occluders: Array[Rect2i] = []   # buildings between the camera and the character
@@ -36,6 +37,19 @@ const EMPTY_RECT := Vector4(1, 1, 0, 0)  # x0 > x1: nothing
 var _slice_on := true
 var _slice_strength := 0.0
 var _covered := false
+var _sun: DirectionalLight3D
+var _env: Environment
+var _torch: OmniLight3D
+var _cave_fill: DirectionalLight3D
+var _figure_shadows := true
+const SUN_ENERGY := 1.3
+const CAVE_AMBIENT := Color(0.45, 0.48, 0.58)  # the fill light underground, where the sky cannot reach
+## How far below the natural surface the character is, 0..1: the slice
+## reaches the whole view and every camera-facing cave wall is knocked down.
+var _underground := 0.0
+const SLICE_RADIUS := 9.0
+const SLICE_RADIUS_UNDERGROUND := 1000.0
+var cave: WorldGen.CaveEntrance   # the entrance nearest the spawn, for --cave and --walk=cave
 
 
 ## The tile shader's globals, registered here as well as in project.godot so
@@ -48,6 +62,8 @@ const SHADER_GLOBALS := {
 	"occluder_strength": [RenderingServer.GLOBAL_VAR_TYPE_FLOAT, 0.0],
 	"occluder_upper": [RenderingServer.GLOBAL_VAR_TYPE_FLOAT, 100000.0],
 	"own_building": [RenderingServer.GLOBAL_VAR_TYPE_VEC4, Vector4(1, 1, 0, 0)],
+	"slice_radius": [RenderingServer.GLOBAL_VAR_TYPE_FLOAT, 9.0],
+	"underground": [RenderingServer.GLOBAL_VAR_TYPE_FLOAT, 0.0],
 }
 
 
@@ -99,15 +115,37 @@ func _ready() -> void:
 	player.arrived.connect(func() -> void: marker.visible = false)
 	player.step_provider = _key_step
 	player.feet_height = finder.feet_height
+	# The character's light underground: a warm pool a few cells across.
+	_torch = OmniLight3D.new()
+	_torch.name = "Torch"
+	_torch.light_color = Color(1.0, 0.85, 0.6)
+	_torch.omni_range = 9.0
+	_torch.omni_attenuation = 1.4
+	_torch.light_energy = 0.0
+	_torch.position = Vector3(0, 1.6, 0)
+	player.add_child(_torch)
 
 	var spawn := town.gate_cell
+	var spawn_y := NAN  # a floor to prefer, when the column has several
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--at="):
-			# Spawn at a column instead of the town gate; height comes from the terrain.
+			# Spawn at a column instead of the town gate; height comes from
+			# the terrain, or from the third value (the floor nearest it).
 			var parts := a.trim_prefix("--at=").split(",")
 			var x := int(parts[0])
 			var z := int(parts[1])
 			spawn = Vector3i(x, gen.height_at(x, z) + 1, z)
+			if parts.size() > 2:
+				spawn_y = float(parts[2])
+	cave = gen.nearest_entrance(Vector2i(spawn.x, spawn.z))
+	if "--cave" in OS.get_cmdline_user_args():
+		# Spawn before the mouth of the cave nearest the spawn point instead.
+		if cave == null:
+			push_error("no cave entrance within reach of %s" % spawn)
+		else:
+			var c := cave.mouth - cave.dir
+			spawn = Vector3i(c.x, gen.height_at(c.x, c.y) + 1, c.y)
+			spawn_y = NAN
 	if "--furniture" in OS.get_cmdline_user_args():
 		_place_furniture_samples()
 	if "--nature" in OS.get_cmdline_user_args():
@@ -118,8 +156,10 @@ func _ready() -> void:
 		spawn = Vector3i(town.origin.x + TownBuilder.STREET, town.height + 1, town.origin.y + TownBuilder.STREET)
 	chunks.update_center(Vector3(spawn.x, 0, spawn.z))
 	chunks.load_all_pending()
-	spawn = _nearest_standable(spawn)
+	spawn = _nearest_standable(spawn, spawn_y)
 	player.place(spawn)
+	if cave != null:
+		print("nearest cave: mouth %s facing %s, landing %s" % [cave.mouth, cave.dir, cave.landing])
 	var t2 := Time.get_ticks_msec()
 	print("tiles+town+roads %d ms (%d road cells), initial %d chunks %d ms, town at %s height %d" % [
 		t1 - t0, road_cells, chunks.loaded_count(), t2 - t1, town.origin, town.height])
@@ -147,6 +187,22 @@ func _setup_environment() -> void:
 	sun.light_angular_distance = 1.5
 	sun.shadow_blur = 1.5
 	add_child(sun)
+	_sun = sun
+	# The shader tells the sun's shadow pass from the camera's view by this.
+	RenderingServer.global_shader_parameter_set("sun_forward", -sun.global_transform.basis.z)
+
+	# Underground the sun is shut out by the ground overhead, as it should
+	# be, and the torch alone leaves the rock beyond it unreadable. This
+	# stands in for it there: the same angle, so faces shade as they do
+	# above ground, but casting no shadows, since there is no light down
+	# here to cast them.
+	var fill := DirectionalLight3D.new()
+	fill.name = "CaveFill"
+	fill.rotation_degrees = sun.rotation_degrees
+	fill.shadow_enabled = false
+	fill.light_energy = 0.0
+	add_child(fill)
+	_cave_fill = fill
 
 	var env := Environment.new()
 	var sky := Sky.new()
@@ -165,6 +221,7 @@ func _setup_environment() -> void:
 	var we := WorldEnvironment.new()
 	we.environment = env
 	add_child(we)
+	_env = env
 
 
 func _setup_marker() -> void:
@@ -192,11 +249,13 @@ func _setup_hud() -> void:
 	layer.add_child(hud)
 
 
-func _nearest_standable(c: Vector3i) -> Vector3i:
+## The nearest feet cell to a column: on the ground, or on the floor
+## nearest height `y` when one is given.
+func _nearest_standable(c: Vector3i, y: float = NAN) -> Vector3i:
 	for r in range(0, 8):
 		for dz in range(-r, r + 1):
 			for dx in range(-r, r + 1):
-				var s: Variant = finder.stand_cell(c.x + dx, c.z + dz)
+				var s: Variant = finder.stand_cell(c.x + dx, c.z + dz) if is_nan(y) else finder.stand_cell_near(c.x + dx, c.z + dz, y)
 				if s != null:
 					return s
 	return c
@@ -210,8 +269,9 @@ func _process(delta: float) -> void:
 	_update_shader_globals()
 	if _auto_zoom_on:
 		rig.context_zoom = _context_zoom()
-	hud.text = "%s\nFPS %d   cell %s   chunks %d loaded, %d pending   zoom %s   knock-down %s   slice %s   blend %s" % [
+	hud.text = "%s\nFPS %d   cell %s%s   chunks %d loaded, %d pending   zoom %s   knock-down %s   slice %s   blend %s" % [
 		_status, Engine.get_frames_per_second(), player.cell,
+		"   underground %d%%" % int(_underground * 100.0) if _underground > 0.0 else "",
 		chunks.loaded_count(), chunks.pending_count(),
 		"auto" if _auto_zoom_on else "manual",
 		"on" if _cutout_on else "off", "on" if _slice_on else "off", "on" if _blend_on else "off"]
@@ -220,6 +280,8 @@ func _process(delta: float) -> void:
 ## The camera size the surroundings call for: closest indoors (something
 ## overhead), closer inside the town wall than in the open.
 func _context_zoom() -> float:
+	if _underground > 0.5:
+		return ZOOM_CAVE
 	if _covered:
 		return ZOOM_INDOORS
 	var c := player.cell
@@ -249,7 +311,45 @@ func _set_blend(on: bool) -> void:
 	RenderingServer.global_shader_parameter_set("blend_enabled", 1.0 if on else 0.0)
 
 
+## Depth below the natural surface, as a strength that ramps in over the
+## first few cubes of a cave tunnel.
+func _underground_now() -> float:
+	var c := player.cell
+	var depth := gen.height_at(c.x, c.z) + 1 - c.y
+	return clampf((depth - 3) / 5.0, 0.0, 1.0)
+
+
+func _slice_radius() -> float:
+	return lerpf(SLICE_RADIUS, SLICE_RADIUS_UNDERGROUND, _underground)
+
+
+## Underground the sun and sky fade to a dim glow and the torch takes over,
+## and the ambient turns from the sky to the cave's own: with the sky dimmed
+## away there is nothing to light the rock the sun and the torch miss, and
+## unlit stone reads as a hole in the world rather than as stone.
+func _update_lighting() -> void:
+	_sun.light_energy = lerpf(SUN_ENERGY, 0.35, _underground)
+	_cave_fill.light_energy = 0.15 * _underground
+	_env.background_energy_multiplier = lerpf(1.0, 0.05, _underground)
+	_env.ambient_light_sky_contribution = lerpf(0.8, 0.0, _underground)
+	_env.ambient_light_color = Color.BLACK.lerp(CAVE_AMBIENT, _underground)
+	_env.ambient_light_energy = lerpf(1.0, 0.32, _underground)
+	_torch.light_energy = 2.5 * _underground
+	# The rock the knock-down and the slice cut away still stands in the
+	# torch's way underground (see the shader), so its shadows are the
+	# real ones; above ground it is dark and casts nothing.
+	_torch.shadow_enabled = _underground > 0.01
+	var figure_shadows := _underground < 0.5
+	if figure_shadows != _figure_shadows:
+		_figure_shadows = figure_shadows
+		player.set_casts_shadow(figure_shadows)
+
+
 func _update_occlusion(delta: float) -> void:
+	_underground = move_toward(_underground, _underground_now(), delta * 2.0)
+	RenderingServer.global_shader_parameter_set("underground", _underground)
+	RenderingServer.global_shader_parameter_set("slice_radius", _slice_radius())
+	_update_lighting()
 	var want_slice := 1.0 if _slice_on and _covered else 0.0
 	_slice_strength = move_toward(_slice_strength, want_slice, delta * 4.0)
 	RenderingServer.global_shader_parameter_set("slice_strength", _slice_strength)
@@ -300,17 +400,25 @@ func _key_step() -> Variant:
 	return n
 
 
-## Mirrors the shader's slice and occluder cuts, so clicks fall through
-## geometry the viewer cannot see. Knocked-down walls need no mirror: wall
-## pieces have no collision, so a click already passes through them.
+## Mirrors the shader's slice, occluder and cave-wall cuts, so clicks fall
+## through geometry the viewer cannot see. Knocked-down house walls need no
+## mirror: wall pieces have no collision, so a click already passes through.
 func _is_hidden_point(p: Vector3) -> bool:
 	var rel := p - player.global_position
+	var dxz := Vector2(rel.x, rel.z).length()
 	if _slice_strength > 0.5:
 		var slice_y := float(player.cell.y + SLICE_HEADROOM)
 		var c := Vector2i(floori(p.x), floori(p.z))
-		var in_reach := _own_building.has_point(c) if _own_building.size != Vector2i.ZERO else Vector2(rel.x, rel.z).length() < 9.0 - 1.0
+		var in_reach := _own_building.has_point(c) if _own_building.size != Vector2i.ZERO else dxz < _slice_radius() - 1.0
 		if p.y > slice_y + 0.001 and in_reach:
 			return true
+	if _cutout_strength > 0.5 and p.y > float(player.cell.y + 1) + 0.001:
+		var t := chunks.get_cell(Vector3i(p.floor()))
+		if TileLibrary.is_rock(t) and maxf(_underground, (14.0 - dxz) / 2.0) > 0.5:
+			var camside := rig.camera.global_transform.basis.z
+			var yaw := (1 if camside.x > 0.0 else 0) + (2 if camside.z > 0.0 else 0)
+			if TileLibrary.rock_mask(t) & (1 << yaw):
+				return true
 	if _occluder_strength > 0.5 and p.y > float(player.cell.y + 1) + 0.001:
 		var c := Vector2i(floori(p.x), floori(p.z))
 		for r in _occluders:
@@ -638,8 +746,15 @@ func _run_selftest(shot: String) -> void:
 	for a in args:
 		if a.begins_with("--walk="):
 			walks -= 1
-			var parts := a.trim_prefix("--walk=").split(",")
-			_walk_to(int(parts[0]), int(parts[1]), float(parts[2]) if parts.size() > 2 else NAN)
+			if a == "--walk=cave":
+				# Down the nearest cave's tunnel to its landing.
+				if cave == null:
+					push_error("selftest: no cave entrance to walk to")
+				else:
+					_walk_to(cave.landing.x, cave.landing.y, float(WorldGen.CAVE_Y))
+			else:
+				var parts := a.trim_prefix("--walk=").split(",")
+				_walk_to(int(parts[0]), int(parts[1]), float(parts[2]) if parts.size() > 2 else NAN)
 			print("selftest: ", _status)
 			var f := 0
 			while player.is_moving() and f < 4000:

@@ -42,6 +42,10 @@ cam_forward={
 "type": "vec3",
 "value": Vector3(0, 0, -1)
 }
+sun_forward={
+"type": "vec3",
+"value": Vector3(0, -1, 0)
+}
 cutout_enabled={
 "type": "float",
 "value": 0.0
@@ -87,6 +91,14 @@ slice_height={
 "value": 100000.0
 }
 slice_strength={
+"type": "float",
+"value": 0.0
+}
+slice_radius={
+"type": "float",
+"value": 9.0
+}
+underground={
 "type": "float",
 "value": 0.0
 }

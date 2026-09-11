@@ -30,6 +30,34 @@ covers what is easy to get wrong.
 - Rooms are the walkable cells between doorways: a partition must enclose
   its room completely (a missing wall cell merges two rooms and their
   furnishing), and a stair's middle steps do not connect rooms.
+- Caves: `--cave --walk=cave --selftest` walks the nearest cave's tunnel
+  to its landing headless (add `--at=X,Z` to pick another mouth; the
+  startup line prints the mouth, its facing and the landing). Screenshots
+  in a tunnel or the cave level need the floor's Y in `--walk` or `--at`,
+  or the walk goes to the surface above. Rock is only placed where a face
+  can show, so the rock mass between passages is empty inside; a cube
+  that must be seen from above needs placing (the cap at `CAVE_Y` does
+  that for the cave level). Wall masks are per camera yaw, not per
+  exposed side: a cube hides the cell one diagonal step away and one
+  down, so anything on that line to a passage must carry the bit.
+  Cave rock takes the ids from `ROCK_BASE`, above every other id:
+  sixteen masks for each of the 70 shapes a cube's four corner codes
+  (`TileLibrary.RockCorner`) reduce to, turned with `rotation_index`, so
+  anything that rewrites a rock cell must keep its shape and orientation.
+  A curve must live in the cube whose wall it belongs to, or the
+  knock-down leaves it hanging when that wall goes; and a cube it cuts
+  material out of needs a floor under it, since the mass is hollow.
+  Underground the shader keeps its cuts out of the shadow pass, so cut
+  rock still blocks light. It knows a shadow pass by the direction it is
+  seen from: down `sun_forward`, or along an axis, which is how an omni
+  light's six cube faces look and is a direction the isometric camera
+  never takes. Testing against `cam_forward` instead looks equivalent and
+  is not: that uniform is a frame behind the camera, so the cuts blink off
+  while the camera turns and the surface flashes over the cave. Black in an underground screenshot is
+  as likely to be unlit rock as a hole: check with `--noslice` before
+  adding geometry. The water sheet is one mesh to the chunk, so its
+  `cell_y` is the chunk's y, not the water's; the shader slices it by
+  fragment.
 
 ## GDScript strictness
 

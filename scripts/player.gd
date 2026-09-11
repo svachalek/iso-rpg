@@ -77,6 +77,16 @@ func _add_xray_shell() -> void:
 	_body.add_child(mi)
 
 
+## Whether the figure casts shadows. Underground it must not: its own
+## torch stands right over it, and it would walk about in a hard shadow of
+## itself.
+func set_casts_shadow(on: bool) -> void:
+	var mode := GeometryInstance3D.SHADOW_CASTING_SETTING_ON if on else GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	for mi: MeshInstance3D in _body.find_children("*", "MeshInstance3D", true, false):
+		if mi.material_override != _xray:
+			mi.cast_shadow = mode
+
+
 static func cell_center(c: Vector3i) -> Vector3:
 	return Vector3(c.x + 0.5, c.y, c.z + 0.5)
 

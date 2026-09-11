@@ -11,7 +11,12 @@ render_mode cull_back, specular_disabled;
 //    half-height ground-floor walls with its doorways showing.
 //  - slice (indoors): everything above slice_height within slice_radius of
 //    the character, and over the whole footprint of the building they are
-//    in, is removed, like lifting the roof off a building.
+//    in, is removed, like lifting the roof off a building. Underground the
+//    radius grows to take in the whole view, so the surface lifts away and
+//    the cave level shows as a cutaway.
+//  - cave walls: a rock cube's vertex colour says, for each of the four
+//    camera yaws, whether it stands on the line of sight to a passage;
+//    when it does it is knocked down like a house wall.
 
 uniform sampler2D atlas : source_color, filter_nearest_mipmap, repeat_disable;
 uniform float cutout_exempt = 0.0;   // 1 for furniture and trees, which occluder cuts leave alone
@@ -19,6 +24,8 @@ uniform float cutout_exempt = 0.0;   // 1 for furniture and trees, which occlude
 // in mesh space (y for a post, which faces every way), turned with the
 // instance like a normal. 2 for pieces hung on a wall, whose tangent
 // points from the wall into the room: they go by the wall cell behind them.
+// 3 for cave rock, whose COLOR holds a bit per camera yaw: set when the
+// cube hides a passage from a camera toward (-x,-z), (+x,-z), (-x,+z), (+x,+z).
 uniform float knockdown = 0.0;
 uniform float terrain_blend = 0.0;   // 1 for natural ground tiles: blend materials across cells
 
@@ -35,6 +42,7 @@ const float ATLAS_COLS = 8.0;
 const float INSET = 0.5 / 256.0;   // half a texel of a 256 px atlas
 global uniform vec3 player_pos;      // character feet, world space
 global uniform vec3 cam_forward;
+global uniform vec3 sun_forward;    // the sun's direction, to tell its shadow pass from the camera's view
 global uniform float cutout_enabled;   // 0..1 strength of the knock-down (C toggles)
 global uniform float cutout_floor;     // world y; only what is at or above it is cut
 global uniform vec4 occluder_a;        // x0, z0, x1, z1 cells (inclusive) of a building in the way, or empty
@@ -45,7 +53,8 @@ global uniform float occluder_upper;   // world y of the occluders' upper floor:
 global uniform vec4 own_building;      // footprint of the building the character is in, or empty
 global uniform float slice_height;     // world y; cubes at or above it are hidden
 global uniform float slice_strength;   // 0..1, fades the slice in and out
-uniform float slice_radius = 9.0;      // horizontal distance from the character
+global uniform float slice_radius;     // horizontal distance from the character; the whole view underground
+global uniform float underground;      // 0..1: how far below the surface the character is
 uniform float slice_fade = 2.0;
 uniform float knock_radius = 14.0;     // the knock-down reaches a whole room's front walls
 
@@ -159,8 +168,10 @@ void fragment() {
 	}
 
 	// Only cut from the cell above the feet upward, so ramps and slabs
-	// around the character stay put; wall pieces are cut at waist height.
-	float above = (knockdown > 0.5 ? world_pos.y >= cutout_floor : cell_y > cutout_floor) ? 1.0 : 0.0;
+	// around the character stay put; wall pieces are cut at waist height,
+	// cubes (cave rock included) by cell.
+	bool wall_piece = knockdown > 0.5 && knockdown < 2.5;
+	float above = (wall_piece ? world_pos.y >= cutout_floor : cell_y > cutout_floor) ? 1.0 : 0.0;
 	float dxz = length(rel.xz);
 	// The cell this fragment belongs to, nudged inward off its face so the
 	// outer faces of edge cubes count with their cube.
@@ -181,7 +192,7 @@ void fragment() {
 	// lies on the camera's side of theirs along the axis the wall faces, or
 	// in their own row (the wall they stand in the doorway of). A post
 	// where walls meet belongs to both, and stays while either stands.
-	if (knockdown > 0.5 && cutout_enabled > 0.0) {
+	if (wall_piece && cutout_enabled > 0.0) {
 		vec3 facing = (INV_VIEW_MATRIX * vec4(TANGENT, 0.0)).xyz;
 		vec2 wallcell = knockdown > 1.5 ? cellxz - round(facing.xz) : cellxz;
 		vec2 relcell = wallcell - floor(player_pos.xz);
@@ -203,6 +214,17 @@ void fragment() {
 		cut = max(cut, (front ? 1.0 : 0.0) * above * near * cutout_enabled);
 	}
 
+	// Cave walls. A rock cube that hides a passage from this yaw goes;
+	// underground every such wall, nearer the surface those within reach.
+	if (knockdown > 2.5 && cutout_enabled > 0.0) {
+		vec2 camside = -cam_forward.xz;
+		int yaw = (camside.x > 0.0 ? 1 : 0) + (camside.y > 0.0 ? 2 : 0);
+		float bit = yaw == 0 ? COLOR.r : (yaw == 1 ? COLOR.g : (yaw == 2 ? COLOR.b : COLOR.a));
+		bool front = bit > 0.5;
+		float near = max(underground, clamp((knock_radius - dxz) / slice_fade, 0.0, 1.0));
+		cut = max(cut, (front ? 1.0 : 0.0) * above * near * cutout_enabled);
+	}
+
 	// Level slice.
 	// Indoors the whole of the character's own building is sliced and
 	// nothing else (other roofs are left to the occluder cut, so none
@@ -214,14 +236,32 @@ void fragment() {
 	// A tree is one item in its root cell, so cut it where the slice plane
 	// (the floor of the first hidden cell) crosses the trunk.
 	float over = world_pos.y > slice_height + 0.5 ? 1.0 : 0.0;
+#elif defined(WATER)
+	// The water sheet is one mesh to the chunk, so cell_y is the chunk's
+	// own y, not the water's: cut it where the plane crosses the surface.
+	float over = world_pos.y > slice_height + 0.5 ? 1.0 : 0.0;
 #else
 	float over = cell_y > slice_height ? 1.0 : 0.0;
 #endif
 	float sliced = over * slice_reach * slice_strength;
 	cut = max(cut, sliced);
-	if (cut > 0.0) {
+	// Every cut above is a way of seeing the character, not a hole in the
+	// world. Underground it must not be one for the light either: rock cut
+	// away there keeps its shadow, so a knocked-down wall still stands in
+	// the torch's way and the lifted ground still keeps the sun out of the
+	// cave, which has only the torch and a dim fill of its own. A fragment
+	// is being drawn into a shadow map when it is seen from a light rather
+	// than from the camera: down the sun's own direction, or along an axis,
+	// which is how the six faces of an omni light's cube look and is a
+	// direction the camera never takes. The cut fades out of the shadow
+	// pass with depth, so it does not switch over in a step.
+	vec3 view_dir = normalize(-(INV_VIEW_MATRIX * vec4(0.0, 0.0, 1.0, 0.0)).xyz);
+	vec3 axis = abs(view_dir);
+	bool shadow_pass = dot(view_dir, sun_forward) > 0.999 || max(axis.x, max(axis.y, axis.z)) > 0.999;
+	float cut_here = shadow_pass ? cut * (1.0 - underground) : cut;
+	if (cut_here > 0.0) {
 		ivec2 px = ivec2(FRAGCOORD.xy) % 4;
-		if (cut > BAYER[px.y * 4 + px.x]) {
+		if (cut_here > BAYER[px.y * 4 + px.x]) {
 			discard;
 		}
 	}

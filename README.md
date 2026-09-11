@@ -68,6 +68,29 @@ same scale; there is no zoom-in view.
   line along whichever grid axis gives the shorter span (decking over bars
   narrower than four cells), the road runs on along that axis until the
   line ahead is clear of water, then resumes toward its goal
+- Caves: one level of passages and caverns at a fixed depth under the whole
+  world (feet at `CAVE_Y`, three cubes tall), following the zero contour of
+  a worm noise and the peaks of a cavern noise. Rock is placed only where a
+  face can show: a cap at feet height over the whole rock mass, walls
+  rising beside passages, floors and ceilings. Every corner a wall column
+  has on a passage is rounded off, so passages curve rather than turn
+  square corners: a corner the rock juts out into is cut back to a quarter
+  column, and an inside corner is filled with a cove, halved between the
+  two columns that make the angle so the knock-down never leaves half of
+  one standing on its own. A column carved that way is floored under its
+  cap, which would otherwise look into the hollow rock mass. Cave mouths are picked per
+  128-cell tile on hillsides away from rivers and hand-shaped ground: a
+  two-wide stair tunnel descends one cube per step into the hill, turning
+  every seven steps, under a rock outcrop built over its first steps (with
+  a torch on each jamb and boulders at its foot), and lands in a chamber
+  from which a corridor joins the nearest passage. The cave level stays
+  solid under the last steps so the stair always arrives in rock. The
+  columns within `TUNNEL_MASS` of the tunnel are filled with rock under
+  the natural ground, since the slice cuts a tunnel open at whatever depth
+  the character has reached and the rock elsewhere is only a shell: without
+  it the stair hangs in the air over the cave level far below. Chunks
+  report their cave floors per column, so a column can have cave, ground
+  and upstairs feet cells; cave floors skip the wading check
 - Hand-edit layer over the generator (scripts/world_edits.gd): column height
   overrides, per-column surface material overrides, and per-cell tile
   overrides, applied when a chunk is built
@@ -149,7 +172,26 @@ same scale; there is no zoom-in view.
     the character is outdoors behind it or indoors with it in the way
   - level slice: when something solid is overhead, every cube more than three
     above the character's feet is hidden within a nine cube radius, so tree
-    canopies and (later) roofs lift away
+    canopies and (later) roofs lift away. Underground (a strength that ramps
+    in over the first cubes below the natural surface) the radius grows to
+    the whole view, so the surface lifts off and a tunnel shows as a cutaway
+    of the hill. Cut cubes still cast their shadows underground, so the
+    cutaway is a way of seeing in and not a hole in the hill: the sun is
+    shut out by the ground overhead as it should be, and the torch on the
+    character throws real shadows off the rock the knock-down took away.
+    In its place a shadowless fill light at the sun's angle keeps the
+    faces of the rock apart, over a dim ambient of the cave's own. The
+    character casts no shadow while carrying the torch, which stands right
+    over them. The
+    water sheet is cut by the height of its own surface, not by its
+    chunk's, or a lake stays floating over the cutaway
+  - cave walls: the isometric view ray drops one cube per diagonal cell, so
+    a cube exactly hides the cell k cells along the diagonal and k down, and
+    half-hides the two beside it. Each cave rock cube's vertex colour holds,
+    per camera yaw, whether it stands on such a line to a passage floor or
+    the character's cells; when it does it is knocked down to the cap like
+    a house wall, so the near walls of a passage go and the far ones stand
+    as rims. Clicks mirror the cut
   - x-ray: a capsule silhouette shows through anything that still hides them
 
 ## Running
@@ -175,7 +217,9 @@ Optional user args go after `--`:
     --walk=X,Z[,Y]        walk to column X,Z (the floor nearest height Y); repeatable, screenshot after the last
     --zoom=N              with --walk: camera size for the screenshot
     --yaw=DEG             with --walk: camera yaw for the screenshot
-    --at=X,Z              spawn at column X,Z (the first and last HUD cell coordinates) instead of the town gate
+    --at=X,Z[,Y]          spawn at column X,Z (the first and last HUD cell coordinates) instead of the town gate, on the floor nearest Y
+    --cave                spawn before the mouth of the cave nearest the spawn point (the gate, or --at)
+    --walk=cave           walk down that cave's tunnel to its landing
     --shapes              with --nowalk: lay out every shape and rotation by the gate
     --furniture           with --nowalk: an empty town with every furniture kind in four rotations
     --nature              an empty town with every nature piece in every colour loaded, then the props
@@ -206,14 +250,14 @@ with `class_name` so the class cache exists):
 ## Layout
 
     scripts/tile_library.gd   Tile enum, atlas painter, cube mesh builder, model loader, MeshLibrary
-    scripts/world_gen.gd      Noise terrain, trees and decorations, chunk fill, applies edits
+    scripts/world_gen.gd      Noise terrain, trees and decorations, caves and their entrances, chunk fill, applies edits
     scripts/world_edits.gd    Sparse height and cell overrides
     scripts/town_builder.gd   Site search and town layout as edits
     scripts/road_builder.gd   Roads and bridges as edits
     scripts/chunk_manager.gd  Chunk streaming, world cell lookup
-    scripts/pathfinder.gd     Stand-cell rules and A* over feet cells, floors and stairs included
+    scripts/pathfinder.gd     Stand-cell rules and A* over feet cells, cave floors, upper floors and stairs included
     scripts/player.gd         Walking figure
     scripts/camera_rig.gd     Isometric orthographic camera
     scripts/main.gd           Wiring, input, HUD, self-test, shader globals
-    shaders/tiles.gdshader    Atlas lookup plus the knock-down, occluder cuts and slice
+    shaders/tiles.gdshader    Atlas lookup plus the knock-down, occluder cuts, cave walls and slice
     shaders/xray.gdshader     Inverted-depth silhouette for the character
