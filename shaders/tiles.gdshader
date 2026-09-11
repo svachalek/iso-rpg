@@ -148,10 +148,15 @@ void fragment() {
 		// the surface keep their own look.
 		bool blend_side = !top_face && (own == 1 || own == 4);
 		if (top_face || blend_side) {
-			// A tile whose material has no weight here was placed by hand
-			// (a stone wall in grass): keep its own texture.
-			float own_w = (own == 0 || own == 1) ? w.r : (own == 4 ? w.g : (own == 3 ? w.b : (own == 6 ? w.a : 0.0)));
-			if (own_w > 0.001 && land > 0.001) {
+			// A stone or snow tile whose material has no weight here was
+			// placed by hand (a stone wall in grass): keep its own texture.
+			// Grass and sand are only ever natural, and always blend: sand
+			// fades out of the map just as grass cubes begin, so the last
+			// sand cubes before the grass carry next to no sand weight, and
+			// keeping their own texture drew them as a hard-edged patch.
+			bool natural = own == 0 || own == 1 || own == 4
+				|| (own == 3 && w.b > 0.001) || (own == 6 && w.a > 0.001);
+			if (natural && land > 0.001) {
 				int g = top_face ? 0 : 1;
 				// Explicit derivatives from the baked UV: the remapped
 				// coordinates jump at face edges and would pick a blurry mip.
