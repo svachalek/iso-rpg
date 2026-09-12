@@ -240,6 +240,32 @@ func furniture_at(c: Vector3i) -> Array:
 	return []
 
 
+## Cells a figure can stand on beside the piece of furniture covering `c`,
+## to use it. Diagonals count: a seat at a table often has only a corner
+## free.
+func furniture_approaches(c: Vector3i) -> Array[Vector3i]:
+	var out: Array[Vector3i] = []
+	var f := furniture_at(c)
+	if f.is_empty():
+		return out
+	var anchor: Vector3i = f[1]
+	var footprint := {}
+	for o in TileLibrary.furniture_cells(f[0], f[2]):
+		footprint[anchor + Vector3i(o.x, 0, o.y)] = true
+	var seen := {}
+	for cell: Vector3i in footprint:
+		for dz in range(-1, 2):
+			for dx in range(-1, 2):
+				if dx == 0 and dz == 0:
+					continue
+				var n := cell + Vector3i(dx, 0, dz)
+				if footprint.has(n) or seen.has(n) or not is_standable(n):
+					continue
+				seen[n] = true
+				out.append(n)
+	return out
+
+
 func _piece(a: Vector3i) -> Array:
 	var t := item(a)
 	if not TileLibrary.is_furniture(t) or t == TileLibrary.FURNITURE_FILL or t == TileLibrary.FURNITURE_FILL_PASSABLE:

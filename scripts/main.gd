@@ -39,6 +39,7 @@ var _slice_strength := 0.0
 var _covered := false
 var _sun: DirectionalLight3D
 var _env: Environment
+var folk: Townsfolk
 var _torch: OmniLight3D
 var _rest_on_arrival: Variant = null  # feet cell of the seat or bed to use when the walk ends
 ## The clock everything in the world keeps: a fraction of a day. Starts in
@@ -199,6 +200,11 @@ func _ready() -> void:
 	print("tiles+town+roads %d ms (%d road cells), initial %d chunks %d ms, town at %s height %d" % [
 		t1 - t0, road_cells, chunks.loaded_count(), t2 - t1, town.origin, town.height])
 
+	folk = Townsfolk.new()
+	folk.name = "Townsfolk"
+	add_child(folk)
+	folk.setup(town, gen, finder, player)
+
 	rig = CameraRig.new()
 	rig.name = "CameraRig"
 	add_child(rig)
@@ -357,6 +363,7 @@ func _process(delta: float) -> void:
 	player.speed_scale = Player.RUN_SCALE if Input.is_key_pressed(KEY_SHIFT) else 1.0
 	_advance_day(delta)
 	chunks.update_center(player.global_position)
+	folk.update(time_of_day)
 	_covered = _is_covered()
 	_update_occlusion(delta)
 	_update_shader_globals()
@@ -508,20 +515,10 @@ func _try_rest(c: Vector3i) -> bool:
 	var f := finder.furniture_at(c)
 	if f.is_empty():
 		return false
-	var spec: Dictionary = TileLibrary.FURNITURE_SPECS[f[0]]
-	var anchor: Vector3i = f[1]
-	var k: int = f[2]
-	var b := TileLibrary.furniture_back(k)
-	var back := Vector3(b.x, 0, b.y)
-	var centre := Figure.cell_center(anchor)
-	if spec.has("sit"):
-		var s: Vector2 = spec["sit"]
-		player.rest(Figure.Rest.SIT, centre - back * s.x + Vector3(0, s.y, 0), -back)
-	elif spec.has("lie"):
-		# Facing the foot of the bed, to lie back toward the pillow.
-		player.rest(Figure.Rest.LIE, centre + Basis(Vector3.UP, k * PI / 2.0) * (spec["lie"] as Vector3), -back)
-	else:
+	var pose := Figure.rest_pose(f[0], f[1], f[2])
+	if pose.is_empty():
 		return false
+	player.rest(pose[0], pose[1], pose[2])
 	marker.visible = false
 	return true
 
@@ -546,36 +543,18 @@ func _rest_click(hit: Vector3, dir: Vector3) -> Variant:
 ## Walks beside the seat or bed covering feet cell `c`, to the free cell
 ## beside it nearest the figure, and uses it on arrival.
 func _walk_to_rest(c: Vector3i) -> void:
-	var f := finder.furniture_at(c)
-	var anchor: Vector3i = f[1]
-	var footprint := {}
-	for o in TileLibrary.furniture_cells(f[0], f[2]):
-		footprint[anchor + Vector3i(o.x, 0, o.y)] = true
-	var spots: Array[Vector3i] = []  # [beside, piece cell] pairs
-	for cell: Vector3i in footprint:
-		for dz in range(-1, 2):
-			for dx in range(-1, 2):
-				# Diagonals count: a seat at a table often has only a corner free.
-				if dx == 0 and dz == 0:
-					continue
-				var n := cell + Vector3i(dx, 0, dz)
-				if footprint.has(n) or not finder.is_standable(n):
-					continue
-				spots.append(n)
-				spots.append(cell)
-	var best := -1
+	var beside: Variant = null
 	var best_d := INF
-	for i in range(0, spots.size(), 2):
-		var d := Vector3(spots[i] - player.cell).length_squared()
+	for n in finder.furniture_approaches(c):
+		var d := Vector3(n - player.cell).length_squared()
 		if d < best_d:
-			best = i
 			best_d = d
-	if best < 0:
+			beside = n
+	if beside == null:
 		_status = "No room to get to that."
 		return
-	var beside := spots[best]
 	if beside == player.cell:
-		_try_rest(spots[best + 1])
+		_try_rest(c)
 		return
 	var path := finder.find_path(player.cell, beside)
 	if path.is_empty():
@@ -583,7 +562,7 @@ func _walk_to_rest(c: Vector3i) -> void:
 		return
 	_status = "Path: %d steps" % path.size()
 	player.set_path(path)
-	_rest_on_arrival = spots[best + 1]
+	_rest_on_arrival = c
 
 
 ## Mirrors the shader's slice, occluder and cave-wall cuts, so clicks fall
@@ -790,9 +769,26 @@ func _maybe_run_selftest() -> void:
 			shot = a.trim_prefix("--screenshot=")
 		elif a == "--selftest":
 			selftest = true
-	if shot.is_empty() and not selftest:
+	var folk_report := "--folk" in OS.get_cmdline_user_args()
+	if shot.is_empty() and not selftest and not folk_report:
+		return
+	if folk_report:
+		_report_folk(shot)
 		return
 	_run_selftest(shot)
+
+
+## `--folk` stands still long enough for the townsfolk to reach whatever
+## the hour asks of them, says where they all are, and quits. With
+## `--time=HH:MM --daylen=0` it reports one hour of the day.
+func _report_folk(shot: String) -> void:
+	for i in 240:
+		await get_tree().process_frame
+	print(folk.report())
+	if not shot.is_empty():
+		await RenderingServer.frame_post_draw
+		get_viewport().get_texture().get_image().save_png(shot)
+	get_tree().quit()
 
 
 func _walk_next_to_tree() -> bool:

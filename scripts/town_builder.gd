@@ -273,6 +273,26 @@ var gate_cell := Vector3i.ZERO   # feet cell on the road outside the south gate
 ## Every building's footprint in world cells and the rows it spans, from
 ## its floor to the top of its roof: [Rect2i, y0, y1].
 var buildings: Array[Array] = []
+## One per house, in the order of HOUSES, with everything put inside it:
+## who lives where is worked out from these.
+var homes: Array[Home] = []
+var _home: Home = null  # the house being furnished
+
+
+## A house and what was placed in it.
+class Home:
+	var rect: Rect2i         # footprint in world cells
+	var layout: String       # its name in LAYOUTS
+	var door: Vector3i       # feet cell just inside the front door
+	var pieces: Array = []   # [furniture kind, world anchor cell, quarter turns]
+
+	## Every piece of one of `kinds`, as [cell, quarter turns] pairs.
+	func of_kind(kinds: Array) -> Array:
+		var out: Array = []
+		for p: Array in pieces:
+			if p[0] in kinds:
+				out.append([p[1], p[2]])
+		return out
 var demo_cell := Vector3i.ZERO   # feet cell inside the first house
 var demo_upper := Vector3i.ZERO  # feet cell on the first house's upstairs landing
 
@@ -316,7 +336,15 @@ func build(gen: WorldGen, center: Vector2i, with_houses: bool = true) -> void:
 				if _gap(other, lay.rect) < 2:
 					push_warning("town: %s at %s is within a cell of another house" % [h[1], h[0]])
 			rects.append(lay.rect)
+			var home := Home.new()
+			home.rect = Rect2i(lay.rect.position + origin, lay.rect.size)
+			home.layout = h[1]
+			var step_in: Vector2i = lay.door - lay.out
+			home.door = Vector3i(origin.x + step_in.x, height + 1, origin.y + step_in.y)
+			homes.append(home)
+			_home = home
 			_house(e, lay)
+			_home = null
 			var eave_y := height + lay.storeys * STOREY
 			var mid := lay.rect.get_center()
 			buildings.append([Rect2i(lay.rect.position + origin, lay.rect.size), height + 1, _roof_top(lay.rect, eave_y, mid.x, mid.y)])
@@ -1290,6 +1318,8 @@ func _place_at(e: WorldEdits, room: Room, kind: int, k: int, c: Vector2i) -> Var
 			# A model whose back is not at -z carries its own quarter turns.
 			var turn: int = spec.get("turn", 0)
 			e.set_cell(_w(p.x, room.y, p.y), TileLibrary.furniture_id(kind), TileLibrary.rotation_index(k + turn))
+			if _home != null:
+				_home.pieces.append([kind, _w(p.x, room.y, p.y), k])
 		else:
 			e.set_cell(_w(p.x, room.y, p.y), TileLibrary.FURNITURE_FILL_PASSABLE if passable else TileLibrary.FURNITURE_FILL)
 	return Vector3i(c.x, c.y, k)

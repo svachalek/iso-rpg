@@ -212,6 +212,23 @@ static func cell_center(c: Vector3i) -> Vector3:
 	return Vector3(c.x + 0.5, c.y, c.z + 0.5)
 
 
+## How a figure uses a piece of furniture placed with `k` quarter turns at
+## `anchor`, as [Rest kind, the middle of the seat or mattress, the way to
+## face], or [] if the piece is not one to sit on or lie in. A seat is used
+## facing away from its back, a bed with the head at the pillow.
+static func rest_pose(kind: int, anchor: Vector3i, k: int) -> Array:
+	var spec: Dictionary = TileLibrary.FURNITURE_SPECS.get(kind, {})
+	var b := TileLibrary.furniture_back(k)
+	var back := Vector3(b.x, 0, b.y)
+	var centre := cell_center(anchor)
+	if spec.has("sit"):
+		var s: Vector2 = spec["sit"]
+		return [Rest.SIT, centre - back * s.x + Vector3(0, s.y, 0), -back]
+	if spec.has("lie"):
+		return [Rest.LIE, centre + Basis(Vector3.UP, k * PI / 2.0) * (spec["lie"] as Vector3), -back]
+	return []
+
+
 ## Where the feet go for a cell, honouring half-height tiles.
 func pos_of(c: Vector3i) -> Vector3:
 	var y := float(c.y)

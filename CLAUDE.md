@@ -83,6 +83,14 @@ cannot use `call()`.
   night: the shader knows a shadow pass only by the single `sun_forward`
   direction, so a second caster would be taken for the camera. Screenshots
   of an hour want `--time=HH:MM --daylen=0`.
+- Townsfolk live only near the player: chunks exist around the player and
+  nowhere else, so anyone further out than `SIM_RADIUS` is put where the
+  hour says instead of walked there, and tries again when the player comes
+  near. Nobody stands in a bed, a seat or a counter — they are all solid —
+  so every stop resolves through `_standing_spot`, which goes beside a
+  piece of furniture and onto open ground otherwise. `TownBuilder.Home`
+  records each house's pieces as they are placed, which is who gets which
+  bed. `--folk --time=HH:MM --daylen=0` reports where everyone ends up.
 - Sitting and lying: a piece says where the figure goes on it with `sit` or
   `lie` in `FURNITURE_SPECS`, in cubes from the anchor cell's centre before
   rotation (the model's own measurements, at `FURNITURE_SCALE`); the figure

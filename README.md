@@ -23,6 +23,24 @@ same scale; there is no zoom-in view.
   `FURNITURE_SPECS`) and where it goes on the figure from the pose of the
   pack's own animation. Its cell stays the one beside the piece, so
   pathfinding and the cuts carry on as before
+- A day and a night in five minutes (`--daylen=`): one directional light is
+  the sun by day and the moon by night, climbing from the east, crossing at
+  noon and setting in the west, reddening as it nears the horizon. The sky,
+  the ambient and its sky contribution follow the hour; after dark the
+  night's own ambient carries the light, and the character's torch lights
+  as it does underground. It stays one light because the tile shader knows
+  a shadow pass only by the single `sun_forward` direction
+- Townsfolk (scripts/townsfolk.gd): one to every house with a bed, in the
+  pack's other four characters. Each keeps the same day — asleep in their
+  own bed, breakfast at their table, a morning's work at their shop
+  counter or out in the fields beyond the wall, lunch, more work, dinner,
+  an evening by their fire or in an inn, then bed. They are Figures like
+  the player, walking the same paths with the same animations and using
+  the same seats and beds. Only those within a few dozen cells of the
+  player are walked anywhere: the world holds chunks around the player and
+  nowhere else, so the rest simply stand where the hour says and start
+  walking again when the player comes near. One path is planned a frame,
+  since everyone changes place on the same tick
 - The ground surface is a heightfield on the grid vertices: each vertex is
   the mean of the continuous terrain height of the four columns around it,
   snapped to quarter cubes. Every column reads its four corners from that
@@ -242,6 +260,7 @@ Optional user args go after `--`:
     --time=HH:MM          start at this time of day (or a fraction of a day)
     --daylen=SECONDS      seconds in a day (default 300); 0 holds the clock
     --walk=cave           walk down that cave's tunnel to its landing
+    --folk                wait for the townsfolk to settle, say where they all are, quit
     --walk=seat           walk to the nearest chair or stool and sit on it
     --walk=bed            walk to the nearest bed and lie on it
     --shapes              with --nowalk: lay out every shape and rotation by the gate
