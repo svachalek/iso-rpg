@@ -13,6 +13,7 @@ const STREET := 31
 const WALL_H := 3     # wall rows per storey; upper storeys sit on a plank floor row
 const STOREY := WALL_H + 1
 const STAIR_RUN := 4  # ramp cells between floors, each rising one cube
+const WALL_GROUP := 4  # cells of town wall the occluder cut takes at once
 
 ## Building layouts, one string per row and one list of rows per storey,
 ## drawn with the front door on the bottom edge (facing +z); the town list
@@ -273,6 +274,11 @@ var gate_cell := Vector3i.ZERO   # feet cell on the road outside the south gate
 ## Every building's footprint in world cells and the rows it spans, from
 ## its floor to the top of its roof: [Rect2i, y0, y1].
 var buildings: Array[Array] = []
+## Everything the occluder cut may take when it stands between the camera
+## and the character, in the same shape: the buildings, and each length of
+## the town wall. The wall stands three cubes, so without this it would
+## hide whoever walks along the inside of it.
+var occluders: Array[Array] = []
 ## One per house, in the order of HOUSES, with everything put inside it:
 ## who lives where is worked out from these.
 var homes: Array[Home] = []
@@ -347,7 +353,9 @@ func build(gen: WorldGen, center: Vector2i, with_houses: bool = true) -> void:
 			_home = null
 			var eave_y := height + lay.storeys * STOREY
 			var mid := lay.rect.get_center()
-			buildings.append([Rect2i(lay.rect.position + origin, lay.rect.size), height + 1, _roof_top(lay.rect, eave_y, mid.x, mid.y)])
+			var box := [Rect2i(lay.rect.position + origin, lay.rect.size), height + 1, _roof_top(lay.rect, eave_y, mid.x, mid.y)]
+			buildings.append(box)
+			occluders.append(box)
 	_town_wall(e)
 
 	gate_cell = Vector3i(origin.x + STREET, height + 1, origin.y + SIZE - 2)
@@ -1390,18 +1398,63 @@ func _place_next_to(e: WorldEdits, room: Room, first: Vector3i, kind: int) -> Va
 	return null
 
 
+## The town wall, one cell outside the interior on every side. Every cell of
+## the ring carries a column of blocks WALL_ROWS high, with a pillar at each
+## corner and a pair flanking each gate; the street runs out between them.
+## Blocks fill their cells, so the occluder cut takes them whole and a wall
+## it has cut is left with the solid top of the course below.
 func _town_wall(e: WorldEdits) -> void:
-	var s := TileLibrary.Tile.STONE
 	var y := height + 1
 	var a := -1
 	var b := SIZE
-	for i in range(a, b + 1):
-		if i == STREET or i == STREET + 1:
-			continue
-		e.set_cell(_w(i, y, a), s)
-		e.set_cell(_w(i, y, b), s)
-		e.set_cell(_w(a, y, i), s)
-		e.set_cell(_w(b, y, i), s)
+	for corner: Vector2i in [Vector2i(a, a), Vector2i(b, a), Vector2i(a, b), Vector2i(b, b)]:
+		_wall_column(e, corner, y, true, 0, 0)
+	# Each side by the cell its run starts at, the way it runs, and the
+	# quarter turn that lays a course across it (k = 0 for a run along x).
+	var sides: Array[Array] = [
+		[Vector2i(0, a), Vector2i(1, 0), 0],
+		[Vector2i(0, b), Vector2i(1, 0), 0],
+		[Vector2i(a, 0), Vector2i(0, 1), 1],
+		[Vector2i(b, 0), Vector2i(0, 1), 1],
+	]
+	for side: Array in sides:
+		var o: Vector2i = side[0]
+		var d: Vector2i = side[1]
+		var k: int = side[2]
+		for i in SIZE:
+			if i == STREET or i == STREET + 1:
+				continue  # the gateway the street runs out through
+			_wall_column(e, o + d * i, y, i == STREET - 1 or i == STREET + 2, i, k)
+		# The occluder cut works on boxes, and one to the cell would give it
+		# too narrow a window to see the character through; it takes the
+		# wall in lengths instead, as it takes a building whole.
+		for g in range(0, SIZE, WALL_GROUP):
+			var lo: Vector2i = origin + o + d * g
+			var hi: Vector2i = origin + o + d * mini(g + WALL_GROUP - 1, SIZE - 1)
+			occluders.append([Rect2i(lo, Vector2i.ONE).expand(hi + Vector2i.ONE), y, y + TileLibrary.WALL_ROWS - 1])
+	for corner: Vector2i in [Vector2i(a, a), Vector2i(b, a), Vector2i(a, b), Vector2i(b, b)]:
+		occluders.append([Rect2i(origin + corner, Vector2i.ONE), y, y + TileLibrary.WALL_ROWS - 1])
+
+
+## One cell of the ring: blocks stacked to the coping. Which course a cell
+## gets goes by its place along the run, so the wall is not one block
+## repeated the whole way round but breaks high up here and there with a
+## clump of moss low down between.
+func _wall_column(e: WorldEdits, c: Vector2i, y: int, pillar: bool, i: int, k: int) -> void:
+	var F := TileLibrary.Furniture
+	for row in TileLibrary.WALL_ROWS:
+		var kind: int
+		if row == TileLibrary.WALL_ROWS - 1:
+			kind = F.WALL_PILLAR_CAP if pillar else F.WALL_CAP
+		elif pillar:
+			kind = F.WALL_PILLAR
+		elif row == TileLibrary.WALL_ROWS - 2 and i % 17 == 6:
+			kind = F.WALL_BLOCK_BROKEN
+		elif row == 0 and i % 7 == 3:
+			kind = F.WALL_BLOCK_MOSS
+		else:
+			kind = F.WALL_BLOCK_ALT if (i + row) % 2 == 1 else F.WALL_BLOCK
+		e.set_cell(_w(c.x, y + row, c.y), TileLibrary.furniture_id(kind), TileLibrary.rotation_index(k))
 
 
 func _w(x: int, y: int, z: int) -> Vector3i:

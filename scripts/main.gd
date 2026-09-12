@@ -675,7 +675,7 @@ func _update_occluders(delta: float) -> void:
 		var feet := player.global_position
 		var own := Vector2i(player.cell.x, player.cell.z)
 		var hits: Array[Array] = []  # [distance, rect]
-		for b in town.buildings:
+		for b in town.occluders:
 			var r: Rect2i = b[0]
 			if r.has_point(own):
 				continue

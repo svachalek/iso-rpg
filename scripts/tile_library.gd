@@ -88,7 +88,9 @@ enum Furniture { BED, BED_FANCY, BED_MAT, CHAIR, STOOL, TABLE, TABLE_FOOD, TABLE
 	STAIR_POST, STAIR_POST_TOP,
 	PART_POST, PART_END, PART_STRAIGHT, PART_CORNER, PART_T, PART_CROSS, PART_DOOR,
 	CHIMNEY, CHIMNEY_STACK, RAIL_SIDE, RAIL_PAIR, RAIL_CORNER, RAIL_U,
-	RUG_SMALL, RUG_BIG }
+	RUG_SMALL, RUG_BIG,
+	WALL_BLOCK, WALL_BLOCK_ALT, WALL_BLOCK_BROKEN, WALL_BLOCK_MOSS,
+	WALL_CAP, WALL_PILLAR, WALL_PILLAR_CAP }
 const FURNITURE_SCALE := 2.0 / 3.0  # the pack's 4-unit walls become 3 cubes; a bed spans 1 by 2 cells
 ## file, scale, footprint cells (w along x, d along z), then for wall items:
 ## wall = true, mount plane z in model units (which lands on the wall face),
@@ -165,7 +167,24 @@ const FURNITURE_SPECS := {
 	# cells kept clear in front of a fire.
 	Furniture.RUG_SMALL: {"build": "rug", "size": Vector2i(2, 1), "passable": true, "rug": true},
 	Furniture.RUG_BIG: {"build": "rug", "size": Vector2i(2, 2), "passable": true, "rug": true},
+	# The town wall, as building blocks: one cube to a cell, stacked
+	# WALL_ROWS high, courses below and a capping course on top, with a
+	# pillar at each corner of the ring and a pair flanking each gate. A
+	# block is a closed box a whole cell across, so the cuts take it by
+	# cell like a cube of terrain and a knocked-down wall is left with the
+	# solid top of the course below, not the inside of a sawn panel. That
+	# is what _structure_mat gives them: an occluding building takes them,
+	# and nothing cuts them through the middle.
+	Furniture.WALL_BLOCK: {"build": "wall_block", "size": Vector2i(1, 1)},
+	Furniture.WALL_BLOCK_ALT: {"build": "wall_block", "size": Vector2i(1, 1)},
+	Furniture.WALL_BLOCK_BROKEN: {"build": "wall_block", "size": Vector2i(1, 1)},
+	Furniture.WALL_BLOCK_MOSS: {"build": "wall_block", "size": Vector2i(1, 1)},
+	Furniture.WALL_CAP: {"build": "wall_block", "size": Vector2i(1, 1)},
+	Furniture.WALL_PILLAR: {"build": "wall_block", "size": Vector2i(1, 1)},
+	Furniture.WALL_PILLAR_CAP: {"build": "wall_block", "size": Vector2i(1, 1)},
 }
+## Rows of blocks the town wall stands: two courses and the coping.
+const WALL_ROWS := 3
 static var _furniture_mat: ShaderMaterial = null
 static var _wall_mat: ShaderMaterial = null   # wall pieces: knocked down to waist height in front of the character
 static var _hung_mat: ShaderMaterial = null   # wall-hung pieces: as the wall behind their cell
@@ -823,6 +842,13 @@ static func _add_furniture(lib: MeshLibrary, atlas: Texture2D) -> void:
 			Furniture.RAIL_U: mesh = _build_rail(1 | 2 | 4)
 			Furniture.RUG_SMALL: mesh = _build_rug(2, 1)
 			Furniture.RUG_BIG: mesh = _build_rug(2, 2)
+			Furniture.WALL_BLOCK: mesh = _build_wall_block(Block.COURSE)
+			Furniture.WALL_BLOCK_ALT: mesh = _build_wall_block(Block.COURSE_ALT)
+			Furniture.WALL_BLOCK_BROKEN: mesh = _build_wall_block(Block.BROKEN)
+			Furniture.WALL_BLOCK_MOSS: mesh = _build_wall_block(Block.MOSS)
+			Furniture.WALL_CAP: mesh = _build_wall_block(Block.CAP)
+			Furniture.WALL_PILLAR: mesh = _build_wall_block(Block.PILLAR)
+			Furniture.WALL_PILLAR_CAP: mesh = _build_wall_block(Block.PILLAR_CAP)
 		lib.create_item(id)
 		lib.set_item_name(id, "FURNITURE_" + Furniture.keys()[kind])
 		lib.set_item_mesh(id, mesh)
@@ -1233,6 +1259,114 @@ static func _build_rail(sides: int) -> ArrayMesh:
 
 ## A woven rug w by d cells: a copper field with a taupe border and fringed
 ## short ends, a few centimetres proud of the floor.
+## The town wall's building blocks. Each is one cube filling its cell, so
+## the cuts take it whole and a knocked-down wall shows the solid top of the
+## course below rather than the inside of a sawn panel.
+##
+## A course is a slab a little narrower than the cell with its face broken
+## up by raised stones, so a run reads as masonry rather than a smooth
+## kerb; the two arrangements alternate along a wall. The coping is wider
+## than the courses and overhangs both faces. A pillar is wider again and
+## square, so it stands proud of the wall it ends.
+enum Block { COURSE, COURSE_ALT, BROKEN, MOSS, CAP, PILLAR, PILLAR_CAP }
+
+const BLOCK_HALF := 0.34      # half the thickness of a wall course
+const BLOCK_CAP_HALF := 0.42  # the coping oversails the courses
+const BLOCK_PILLAR_HALF := 0.46
+## Raised stones on a course's two faces, as the centre of each in cell
+## units: two rows to a block, and the joints of one row falling between
+## those of the other. The two arrangements stagger differently, so laying
+## them alternately along a run breaks up the cell rhythm; none reaches the
+## edge of its cell, which would draw a line down every joint in the wall.
+const BLOCK_STONE := Vector2(0.13, 0.10)   # half width, half height
+const BLOCK_STONE_OUT := 0.018             # how far it stands off the face
+const BLOCK_STONES: Array[Array] = [
+	[Vector2(-0.28, 0.20), Vector2(0.02, 0.22), Vector2(0.30, 0.20),
+		Vector2(-0.13, -0.19), Vector2(0.19, -0.21)],
+	[Vector2(-0.17, 0.21), Vector2(0.17, 0.19),
+		Vector2(-0.31, -0.20), Vector2(-0.01, -0.22), Vector2(0.30, -0.19)],
+]
+
+
+static func _build_wall_block(kind: int) -> ArrayMesh:
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	st.set_material(_structure_mat)
+	var yr := Vector2(-0.5, 0.5)
+	match kind:
+		Block.CAP:
+			# A coping slab over the top of the wall, with a thin fillet
+			# under its oversail so the drip line reads.
+			_bevel_box(st, Vector3(-0.5, -0.5, -BLOCK_HALF - 0.03), Vector3(0.5, -0.34, BLOCK_HALF + 0.03),
+				Swatch.DARK, 0, 0.02, yr, Vector2(0.45, 0.6))
+			_bevel_box(st, Vector3(-0.5, -0.34, -BLOCK_CAP_HALF), Vector3(0.5, 0.16, BLOCK_CAP_HALF),
+				Swatch.STONE, 0, 0.035, yr, Vector2(0.18, 0.42))
+		Block.PILLAR:
+			_bevel_box(st, Vector3(-BLOCK_PILLAR_HALF, -0.5, -BLOCK_PILLAR_HALF),
+				Vector3(BLOCK_PILLAR_HALF, 0.5, BLOCK_PILLAR_HALF), Swatch.STONE, 0, 0.04, yr, Vector2(0.3, 0.62))
+		Block.PILLAR_CAP:
+			# The column's head: a shaft course, a collar, and a cap that
+			# stands above the wall's coping so the corners tell.
+			_bevel_box(st, Vector3(-BLOCK_PILLAR_HALF, -0.5, -BLOCK_PILLAR_HALF),
+				Vector3(BLOCK_PILLAR_HALF, 0.16, BLOCK_PILLAR_HALF), Swatch.STONE, 0, 0.04, yr, Vector2(0.3, 0.62))
+			_bevel_box(st, Vector3(-0.5, 0.16, -0.5), Vector3(0.5, 0.34, 0.5),
+				Swatch.DARK, 0, 0.02, yr, Vector2(0.42, 0.55))
+			_bevel_box(st, Vector3(-0.46, 0.34, -0.46), Vector3(0.46, 0.5, 0.46),
+				Swatch.STONE, 0, 0.03, yr, Vector2(0.16, 0.34))
+		Block.BROKEN:
+			# A course fallen through: the two ends stand with a ragged
+			# gap between them, and rubble sits in the bottom of it.
+			_bevel_box(st, Vector3(-0.5, -0.5, -BLOCK_HALF), Vector3(-0.16, 0.32, BLOCK_HALF),
+				Swatch.STONE, 0, 0.03, yr)
+			_bevel_box(st, Vector3(-0.16, -0.5, -BLOCK_HALF), Vector3(0.04, -0.06, BLOCK_HALF),
+				Swatch.STONE, 0, 0.03, yr)
+			_bevel_box(st, Vector3(0.22, -0.5, -BLOCK_HALF), Vector3(0.5, 0.5, BLOCK_HALF),
+				Swatch.STONE, 0, 0.03, yr)
+			_bevel_box(st, Vector3(0.04, -0.5, -BLOCK_HALF + 0.06), Vector3(0.24, -0.28, BLOCK_HALF - 0.05),
+				Swatch.DARK, 0, 0.03, yr, Vector2(0.5, 0.7))
+		_:
+			_bevel_box(st, Vector3(-0.5, -0.5, -BLOCK_HALF), Vector3(0.5, 0.5, BLOCK_HALF),
+				Swatch.STONE, 0, 0.03, yr)
+			var stones: Array = BLOCK_STONES[1 if kind == Block.COURSE_ALT else 0]
+			for c: Vector2 in stones:
+				for face: float in [-1.0, 1.0]:
+					var z0 := face * BLOCK_HALF
+					var z1 := face * (BLOCK_HALF + BLOCK_STONE_OUT)
+					_bevel_box(st, Vector3(c.x - BLOCK_STONE.x, c.y - BLOCK_STONE.y, minf(z0, z1)),
+						Vector3(c.x + BLOCK_STONE.x, c.y + BLOCK_STONE.y, maxf(z0, z1)),
+						Swatch.STONE, 0, 0.014, yr, Vector2(0.22, 0.4))
+			if kind == Block.MOSS:
+				_block_moss(st, yr)
+	return st.commit()
+
+
+## The clump of leaves the pack tucks into its stonework, low on the face a
+## course shows to whoever walks past. Several small boxes at different
+## sizes and depths rather than one: a single box the size of the clump
+## reads as a coloured brick set in the wall.
+## (x, y, half width, how far it stands off the face, atlas column of row 2)
+const BLOCK_LEAVES: Array[Array] = [
+	[-0.27, -0.26, 0.070, 0.055, 1], [-0.20, -0.14, 0.050, 0.075, 0],
+	[-0.11, -0.29, 0.055, 0.045, 1], [-0.05, -0.19, 0.042, 0.065, 0],
+	[0.04, -0.31, 0.048, 0.040, 1], [0.16, -0.24, 0.060, 0.050, 1],
+	[0.23, -0.13, 0.038, 0.070, 0],
+]
+
+
+static func _block_moss(st: SurfaceTool, yr: Vector2) -> void:
+	for f: Array in BLOCK_LEAVES:
+		var x: float = f[0]
+		var y: float = f[1]
+		var r: float = f[2]
+		var out: float = f[3]
+		var col: int = f[4]
+		for face: float in [-1.0, 1.0]:
+			var z0 := face * (BLOCK_HALF - 0.01)
+			var z1 := face * (BLOCK_HALF + out)
+			_bevel_box(st, Vector3(x - r, y - r, minf(z0, z1)), Vector3(x + r, y + r * 1.3, maxf(z0, z1)),
+				col, 2, 0.015, yr, Vector2(0.28, 0.6))  # row 2: teal green, green
+
+
 static func _build_rug(w: int, d: int) -> ArrayMesh:
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)

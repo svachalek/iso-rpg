@@ -162,6 +162,19 @@ same scale; there is no zoom-in view.
 - Hand-edit layer over the generator (scripts/world_edits.gd): column height
   overrides, per-column surface material overrides, and per-cell tile
   overrides, applied when a chunk is built
+- The town wall: a ring one cell outside the interior, `WALL_ROWS` cubes
+  tall, with a pillar at each corner and a pair flanking each of the four
+  gates, which the main street runs out through. It is laid as building
+  blocks rather than as long pieces: every cell of the ring carries a
+  column of one-cube tiles, two stone courses under a coping, one course
+  in seventeen broken through and one in seven with a clump of leaves in
+  it, and two stone arrangements laid alternately so a run does not repeat.
+  The wall is registered with the occluder cut in lengths of `WALL_GROUP`
+  cells, so a wall between the camera and the character drops the way a
+  building does. Blocks fill their cells, which is what makes that cut
+  clean: it takes them whole, as it takes a cube of terrain, and leaves the
+  solid top of the course below. A wall built as one tall piece per cell
+  would instead be cut through the middle of its panels and stand hollow
 - A walled town (scripts/town_builder.gd) on the flattest site near the
   origin: a main street with gates and two side lanes each way, and thirty-two
   timber buildings with stone footings, doors, windows and hip roofs, placed
