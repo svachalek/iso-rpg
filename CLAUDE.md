@@ -70,10 +70,13 @@ cannot use `call()`.
 
 - Hand-built props, walls and stairs follow the KayKit style: see
   `.claude/skills/style-pieces/SKILL.md` before adding one.
-- `assets/kaykit_dungeon`, `assets/kaykit_nature` and
-  `assets/kaykit_adventurers` (the player's knight) are `.gdignore`d and
-  loaded at runtime with `GLTFDocument`; do not let the editor import them.
-  Keep `LICENSE.txt` there. The nature folder holds only the models in use,
+- `assets/kaykit_dungeon`, `assets/kaykit_nature`,
+  `assets/kaykit_adventurers` (the characters) and `assets/kaykit_animations`
+  (the Character Animations pack's Rig_Medium clips, on a mannequin with the
+  characters' bones: `Figure._read_pack` reads the files in `PACK_FILES`
+  once, renames the track paths and adds the clips to every model's player)
+  are `.gdignore`d and loaded at runtime with `GLTFDocument`; do not let the
+  editor import them. Keep `LICENSE.txt` there. The nature folder holds only the models in use,
   copied from the full pack (`assets/KayKit_Forest_Nature_Pack_1.0_SOURCE`,
   ignored by git and Godot); to add a model, copy its `.gltf` and `.bin`
   from `Assets/gltf/ColorN` and name it in `Nature` or `PROP_SPECS`.

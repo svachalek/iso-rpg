@@ -41,7 +41,14 @@ same scale; there is no zoom-in view.
   the market by the crossroads, lunch, more work, dinner,
   an evening by their fire or in an inn, then bed. They are Figures like
   the player, walking the same paths with the same animations and using
-  the same seats and beds, at a walking pace where the player runs. Only those within a few dozen cells of the
+  the same seats and beds, at a walking pace where the player runs. At
+  work they face the counter with their hands busy on it, or stand at the
+  market holding out their wares: loops from the CC0 KayKit Character
+  Animations pack (assets/kaykit_animations), whose mannequin has the
+  characters' skeleton, so its clips are added to every model's player at
+  startup. Nobody is sent to a cell somebody else stands on or is walking
+  to: two people bound for one spot stand side by side, and a seat already
+  taken is stood beside instead. Only those within a few dozen cells of the
   player are walked anywhere: the world holds chunks around the player and
   nowhere else, so the rest simply stand where the hour says and start
   walking again when the player comes near. Nobody works outside the wall:

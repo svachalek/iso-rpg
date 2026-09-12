@@ -36,15 +36,23 @@ const BEDS: Array = [TileLibrary.Furniture.BED, TileLibrary.Furniture.BED_FANCY,
 const SEATS: Array = [TileLibrary.Furniture.CHAIR, TileLibrary.Furniture.STOOL]
 const COUNTERS: Array = [TileLibrary.Furniture.COUNTER]
 const FIRES: Array = [TileLibrary.Furniture.FIREPLACE]
+## Work loops from the animations pack: hands busy on the counter, and
+## standing at the market with one's wares held out.
+const COUNTER_WORK: Array[String] = ["Working_A", "Working_B", "Working_C"]
+const MARKET_WORK: Array[String] = ["Holding_A", "Holding_B", "Holding_C"]
 
 
 ## One townsman: the figure, and where they are to be through the day.
 class Person:
 	var fig: Figure
-	var stops: Array = []    # [time of day, feet cell] in the day's order
+	var stops: Array = []    # [time of day, feet cell, activity] in the day's order
 	var at := -1             # index of the stop being kept
 	var target := Vector3i.ZERO
+	var activity := ""       # the loop played once there, or "" to idle
 	var use := false         # the target is a seat or bed to use, not a spot to stand on
+	## The cells this person holds: where they stand or are walking to,
+	## and the seat or bed they use. Nobody else is sent to one of them.
+	var claim: Array[Vector3i] = []
 	var walking := false
 	var settled := false     # standing (or sitting) where this stop wants
 
@@ -62,6 +70,7 @@ var hidden_test: Callable
 
 var _cool := 0  # frames to wait before planning the next path
 var _spare_counters: Array[Vector3i] = []  # shop counters nobody works at yet
+var _taken_evening: Array[Vector3i] = []  # inn seats already somebody's evening
 var _people: Array[Person] = []
 var _pending: Array[Person] = []  # waiting for a path; one is planned a frame
 var _town: TownBuilder
@@ -106,20 +115,20 @@ func _add_person(home: TownBuilder.Home, bed: Vector3i, inns: Array) -> void:
 
 	var seats := home.of_kind(SEATS)
 	var table: Vector3i = seats[0][0] if not seats.is_empty() else home.door
-	var work := _work_spot(home)
+	var work := _work_spot(home, i)
 	var evening := _evening_spot(home, inns, i)
 	# Everyone shifted a few minutes off their neighbours, so the whole
 	# town does not change its mind on the same tick.
 	var off := float(i) * 0.004
 	p.stops = [
-		[0.0, bed],
-		[BREAKFAST + off, table],
-		[WORK_AM + off, work],
-		[LUNCH + off, table],
-		[WORK_PM + off, work],
-		[DINNER + off, table],
-		[EVENING + off, evening],
-		[BEDTIME + off, bed],
+		[0.0, bed, ""],
+		[BREAKFAST + off, table, ""],
+		[WORK_AM + off, work[0], work[1]],
+		[LUNCH + off, table, ""],
+		[WORK_PM + off, work[0], work[1]],
+		[DINNER + off, table, ""],
+		[EVENING + off, evening, ""],
+		[BEDTIME + off, bed, ""],
 	]
 	_people.append(p)
 
@@ -134,28 +143,32 @@ func _evening_spot(home: TownBuilder.Home, inns: Array, i: int) -> Vector3i:
 		var b := TileLibrary.furniture_back(f[1])
 		return anchor - Vector3i(b.x, 0, b.y)  # the cell kept clear before the fire
 	if not inns.is_empty():
-		var inn: TownBuilder.Home = inns[i % inns.size()]
-		var seats := inn.of_kind(SEATS)
-		if not seats.is_empty():
-			return seats[i % seats.size()][0]
-		return inn.door
+		# A seat nobody else has taken for the evening, looking through the
+		# inns from this person's own; failing that, the doorstep of one.
+		for k in inns.size():
+			var inn: TownBuilder.Home = inns[(i + k) % inns.size()]
+			for seat: Array in inn.of_kind(SEATS):
+				if not _taken_evening.has(seat[0]):
+					_taken_evening.append(seat[0])
+					return seat[0]
+		return (inns[i % inns.size()] as TownBuilder.Home).door
 	return home.door
 
 
-## A day's work: one's own shop counter, else a spare counter in somebody
-## else's shop, else a place at the market by the crossroads. Nobody works
-## outside the wall: the walk out through the gate is the longest path
-## anyone in the town would ever ask for, and it costs more to plan than
-## everything else these people do put together. Fields can come later
-## with a cheaper way out.
-func _work_spot(home: TownBuilder.Home) -> Vector3i:
+## A day's work, as [cell, the loop played there]: one's own shop counter,
+## else a spare counter in somebody else's shop, else a place at the
+## market by the crossroads. Nobody works outside the wall: the walk out
+## through the gate is the longest path anyone in the town would ever ask
+## for, and it costs more to plan than everything else these people do put
+## together. Fields can come later with a cheaper way out.
+func _work_spot(home: TownBuilder.Home, i: int) -> Array:
 	for c: Array in home.of_kind(COUNTERS):
 		if _spare_counters.has(c[0]):
 			_spare_counters.erase(c[0])
-			return c[0]
+			return [c[0], COUNTER_WORK[i % COUNTER_WORK.size()]]
 	if not _spare_counters.is_empty():
-		return _spare_counters.pop_front()
-	return _market(_people.size())
+		return [_spare_counters.pop_front(), COUNTER_WORK[i % COUNTER_WORK.size()]]
+	return [_market(i), MARKET_WORK[i % MARKET_WORK.size()]]
 
 
 ## A place to stand at the market, along the streets either side of the
@@ -184,7 +197,7 @@ func update(time: float) -> void:
 		var i := _stop_index(p, time)
 		if i != p.at:
 			p.at = i
-			_send(p, p.stops[i][1])
+			_send(p, p.stops[i][1], p.stops[i][2])
 		var dist := p.fig.global_position.distance_to(here)
 		# Out of sight when the cuts have taken the floor they stand on:
 		# the slice and the occluder cuts are the shader's doing and never
@@ -209,8 +222,10 @@ func update(time: float) -> void:
 			break
 
 
-func _send(p: Person, cell: Vector3i) -> void:
+func _send(p: Person, cell: Vector3i, activity: String) -> void:
 	p.target = cell
+	p.activity = activity
+	p.fig.set_activity("")
 	var f := _finder.furniture_at(cell)
 	p.use = not f.is_empty() and not Figure.rest_pose(f[0], f[1], f[2]).is_empty()
 	p.walking = false
@@ -233,8 +248,10 @@ func _start_walk(p: Person) -> bool:
 		_place(p)
 		return false
 	if goal == p.fig.cell:
+		_claim(p, goal)
 		_settle(p)
 		return false
+	_claim(p, goal)
 	# Planned a leg at a time: an A* covers every column of the box between
 	# its ends, so one walk across the town costs more than a dozen short
 	# ones. The rest of the way is planned on arrival.
@@ -276,14 +293,63 @@ func _leg(from: Vector3i, to: Vector3i) -> Vector3i:
 
 ## The cell a person actually stands on for their stop: beside the piece
 ## for anything furnished (a bed and a counter alike are solid, so nobody
-## stands in one), the spot itself for open ground. Null when the ground
+## stands in one), the spot itself for open ground. Never a cell somebody
+## else holds: two people sent to one place stand side by side, and the
+## second to a taken seat stands beside it instead. Null when the ground
 ## there is not loaded, which is most of the world.
 func _standing_spot(p: Person) -> Variant:
+	if p.use and _taken(p.target, p):
+		p.use = false
+	var cells: Array[Vector3i] = []
 	if not _finder.furniture_at(p.target).is_empty():
-		return _nearest(_finder.furniture_approaches(p.target), p.fig.cell)
-	if _finder.is_standable(p.target):
-		return p.target
-	return _finder.stand_cell_near(p.target.x, p.target.z, float(p.target.y))
+		cells = _finder.furniture_approaches(p.target)
+	elif _finder.is_standable(p.target):
+		cells = [p.target]
+	else:
+		var near: Variant = _finder.stand_cell_near(p.target.x, p.target.z, float(p.target.y))
+		if near != null:
+			cells = [near]
+	if cells.is_empty():
+		return null
+	var free: Array[Vector3i] = []
+	for c in cells:
+		if not _taken(c, p):
+			free.append(c)
+	if free.is_empty():
+		free = _free_around(cells[0], p)
+	return _nearest(free, p.fig.cell)
+
+
+## Whether somebody else stands at, is walking to, or uses this cell.
+func _taken(c: Vector3i, by: Person) -> bool:
+	for q in _people:
+		if q != by and q.claim.has(c):
+			return true
+	return false
+
+
+## Marks where a person will stand, and the seat or bed they will use.
+func _claim(p: Person, spot: Vector3i) -> void:
+	p.claim = [spot]
+	if p.use:
+		p.claim.append(p.target)
+
+
+## Stand cells around `c` that nobody else holds, the nearest ring that
+## has any; empty when the two rings out are all taken or unloaded.
+func _free_around(c: Vector3i, p: Person) -> Array[Vector3i]:
+	var out: Array[Vector3i] = []
+	for r in range(1, 3):
+		for dz in range(-r, r + 1):
+			for dx in range(-r, r + 1):
+				if maxi(absi(dx), absi(dz)) != r:
+					continue
+				var s: Variant = _finder.stand_cell_near(c.x + dx, c.z + dz, float(c.y))
+				if s != null and not _taken(s, p) and not out.has(s):
+					out.append(s)
+		if not out.is_empty():
+			break
+	return out
 
 
 ## Puts someone where the hour says without walking them there, for when
@@ -295,6 +361,7 @@ func _place(p: Person) -> void:
 		p.fig.place(p.target)
 		p.walking = false
 		return
+	_claim(p, spot)
 	p.fig.place(spot)
 	_settle(p)
 
@@ -303,6 +370,9 @@ func _settle(p: Person) -> void:
 	p.walking = false
 	p.settled = true
 	if not p.use:
+		if p.activity != "":
+			p.fig.set_activity(p.activity)
+			p.fig.face_toward(p.target)
 		return
 	var f := _finder.furniture_at(p.target)
 	if f.is_empty():
@@ -323,6 +393,8 @@ func report() -> String:
 	for i in _people.size():
 		var p := _people[i]
 		var state := "resting" if p.fig.is_resting() else ("walking" if p.walking else ("settled" if p.settled else "waiting"))
+		if p.settled and not p.fig.is_resting() and p.activity != "":
+			state = "at work (%s)" % p.activity
 		lines.append("  %-16s stop %d target %s at %s %s%s" % [
 			p.fig.model_file.trim_suffix(".glb"), p.at, p.target, p.fig.cell, state,
 			"" if p.fig.visible else " (out of sight)"])

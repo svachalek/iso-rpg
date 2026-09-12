@@ -16,6 +16,14 @@ const WALK_SCALE := 0.4
 const TURN_SPEED := 14.0  # radians per second
 
 const MODEL_DIR := "res://assets/kaykit_adventurers/"
+## The Character Animations pack: more clips for the same rig, on the
+## pack's mannequin. The files named are read once and their clips added
+## to every model's player, with the track paths renamed from the
+## mannequin's skeleton to the characters'.
+const PACK_DIR := "res://assets/kaykit_animations/"
+const PACK_FILES: Array[String] = ["Rig_Medium_Tools.glb", "Rig_Medium_General.glb"]
+const PACK_SKELETON := "Rig_Medium/Skeleton3D"
+const MODEL_SKELETON := "Rig/Skeleton3D"
 ## The pack's characters stand about 3.1 tall; at 0.8 their hats grazed a
 ## doorway's 2.4 of headroom and their shoulders filled it side to side.
 const MODEL_SCALE := 0.74
@@ -77,6 +85,9 @@ var _body: Node3D
 var _model: Node3D
 var _anim: AnimationPlayer
 var _yaw := 0.0  # the body turns toward this
+## A loop played instead of the idle while the figure stands: someone at
+## work. Any clip of the model's or the pack's; empty for the plain idle.
+var _activity := ""
 var _rest := Rest.NONE
 var _phase := Phase.ON
 var _phase_t := 0.0
@@ -87,6 +98,9 @@ var _rest_at := Vector3.ZERO
 ## One reading of each model file, shared by every figure that wears it:
 ## the pack's characters are a few megabytes each.
 static var _loaded := {}  # file -> [GLTFDocument, GLTFState]
+## The pack's clips by name, once PACK_FILES have been read.
+static var _pack := {}
+static var _pack_read := false
 
 
 func _ready() -> void:
@@ -118,9 +132,52 @@ func _add_model() -> void:
 	_anim = _model.find_child("AnimationPlayer", true, false) as AnimationPlayer
 	if _anim == null:
 		return
+	if not _pack_read:
+		_read_pack()
+	var lib := _anim.get_animation_library("")
+	for clip_name: String in _pack:
+		if not lib.has_animation(clip_name):
+			lib.add_animation(clip_name, _pack[clip_name])
 	for anim_name: String in [ANIM_IDLE, ANIM_RUN, ANIM_WALK, REST_ANIMS[Rest.SIT][1], REST_ANIMS[Rest.LIE][1]]:
 		_anim.get_animation(anim_name).loop_mode = Animation.LOOP_LINEAR
 	_anim.play(ANIM_IDLE)
+
+
+## Reads the pack files once, for every figure: each is a mannequin scene
+## whose player holds the clips. The clips are kept and the scene is not.
+static func _read_pack() -> void:
+	_pack_read = true
+	for file in PACK_FILES:
+		var doc := GLTFDocument.new()
+		var state := GLTFState.new()
+		if doc.append_from_file(PACK_DIR + file, state) != OK:
+			push_error("figure: cannot load " + file)
+			continue
+		var scene := doc.generate_scene(state)
+		var player := scene.find_child("AnimationPlayer", true, false) as AnimationPlayer
+		if player != null:
+			for clip_name in player.get_animation_list():
+				var clip := player.get_animation(clip_name).duplicate() as Animation
+				for i in clip.get_track_count():
+					var path := String(clip.track_get_path(i)).replace(PACK_SKELETON, MODEL_SKELETON)
+					clip.track_set_path(i, NodePath(path))
+				_pack[clip_name] = clip
+		scene.free()
+
+
+## Sets the loop the figure plays while it stands, or clears it with "".
+func set_activity(anim_name: String) -> void:
+	_activity = anim_name
+	if _anim != null and anim_name != "" and _anim.has_animation(anim_name):
+		_anim.get_animation(anim_name).loop_mode = Animation.LOOP_LINEAR
+
+
+## Turns the body toward a cell, as at a counter one works at.
+func face_toward(c: Vector3i) -> void:
+	var dir := cell_center(c) - position
+	dir.y = 0.0
+	if dir.length_squared() > 0.001:
+		_yaw = atan2(-dir.x, -dir.z)
 
 
 ## Walks or runs while the figure moves, whichever its pace calls for, and
@@ -128,10 +185,16 @@ func _add_model() -> void:
 func _animate(moving: bool) -> void:
 	if _anim == null:
 		return
-	var want := _move_anim() if moving else ANIM_IDLE
+	var want := _move_anim() if moving else _idle_anim()
 	if _anim.current_animation != want:
 		_anim.play(want, ANIM_BLEND)
 	_anim.speed_scale = _move_rate() if moving else 1.0
+
+
+func _idle_anim() -> String:
+	if _activity != "" and _anim.has_animation(_activity):
+		return _activity
+	return ANIM_IDLE
 
 
 func _walking() -> bool:
