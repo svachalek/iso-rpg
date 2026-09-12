@@ -100,6 +100,7 @@ func _add_person(home: TownBuilder.Home, bed: Vector3i, inns: Array) -> void:
 	p.fig.model_file = MODELS[i % MODELS.size()]
 	p.fig.name = "Townsman%d" % i
 	p.fig.feet_height = _finder.feet_height
+	p.fig.speed_scale = Figure.WALK_SCALE
 	add_child(p.fig)
 	p.fig.place(bed)
 

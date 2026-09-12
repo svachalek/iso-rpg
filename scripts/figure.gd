@@ -9,7 +9,10 @@ extends Node3D
 signal arrived
 
 const SPEED := 4.0  # world units per second
+## Of SPEED: the player's run, and the walk the townsfolk keep and the
+## player drops to while the walk key is held, five times slower.
 const RUN_SCALE := 2.0
+const WALK_SCALE := 0.4
 const TURN_SPEED := 14.0  # radians per second
 
 const MODEL_DIR := "res://assets/kaykit_adventurers/"
@@ -17,13 +20,21 @@ const MODEL_DIR := "res://assets/kaykit_adventurers/"
 ## doorway's 2.4 of headroom and their shoulders filled it side to side.
 const MODEL_SCALE := 0.74
 const ANIM_IDLE := "Idle"
-const ANIM_MOVE := "Running_A"
-## Ground speed at which a planted foot of ANIM_MOVE stays put at
-## MODEL_SCALE, measured from the rig. Even walking pace is a run for legs
-## this short: the pack's walk only covers about 0.6.
-const MOVE_ANIM_SPEED := 2.13
+const ANIM_RUN := "Running_A"
+const ANIM_WALK := "Walking_A"
+## Ground speed at which a planted foot of each move animation stays put
+## at MODEL_SCALE, measured from the rig. Even walking pace is a run for
+## legs this short: the pack's walk is an amble that covers a fifth of
+## what the run does.
+const RUN_ANIM_SPEED := 2.13
+const WALK_ANIM_SPEED := 0.49
+## Ground speed up to which the figure walks rather than runs.
+const WALK_MAX_SPEED := 2.0
 ## The move animation plays faster to keep up with the ground, to a point:
-## past it the feet blur, and sliding a little reads better.
+## past it the feet blur, and sliding a little reads better. The walk
+## reaches it at a little over one cell a second, so WALK_SCALE is a
+## touch faster than its stride and the feet slide; any slower and an
+## hour of the day is not enough to cross the town.
 const MAX_ANIM_RATE := 2.4
 const ANIM_BLEND := 0.15  # seconds
 
@@ -51,7 +62,7 @@ var model_file := "Knight.glb"
 var gear: Array[String] = []
 
 var cell: Vector3i
-## Multiplies SPEED; the caller raises it while a run key is held.
+## Multiplies SPEED: RUN_SCALE or WALK_SCALE, the player's by its walk key.
 var speed_scale := 1.0
 ## Called when the path runs out; may return the next feet cell or null.
 ## Lets held movement keys chain steps without a pause between cells.
@@ -107,20 +118,34 @@ func _add_model() -> void:
 	_anim = _model.find_child("AnimationPlayer", true, false) as AnimationPlayer
 	if _anim == null:
 		return
-	for anim_name: String in [ANIM_IDLE, ANIM_MOVE, REST_ANIMS[Rest.SIT][1], REST_ANIMS[Rest.LIE][1]]:
+	for anim_name: String in [ANIM_IDLE, ANIM_RUN, ANIM_WALK, REST_ANIMS[Rest.SIT][1], REST_ANIMS[Rest.LIE][1]]:
 		_anim.get_animation(anim_name).loop_mode = Animation.LOOP_LINEAR
 	_anim.play(ANIM_IDLE)
 
 
-## Runs while the figure moves and idles when it stops, the run sped up to
-## keep pace with the ground.
+## Walks or runs while the figure moves, whichever its pace calls for, and
+## idles when it stops; the gait is sped up to keep pace with the ground.
 func _animate(moving: bool) -> void:
 	if _anim == null:
 		return
-	var want := ANIM_MOVE if moving else ANIM_IDLE
+	var want := _move_anim() if moving else ANIM_IDLE
 	if _anim.current_animation != want:
 		_anim.play(want, ANIM_BLEND)
-	_anim.speed_scale = minf(SPEED * speed_scale / MOVE_ANIM_SPEED, MAX_ANIM_RATE) if moving else 1.0
+	_anim.speed_scale = _move_rate() if moving else 1.0
+
+
+func _walking() -> bool:
+	return SPEED * speed_scale <= WALK_MAX_SPEED
+
+
+func _move_anim() -> String:
+	return ANIM_WALK if _walking() else ANIM_RUN
+
+
+## How fast the gait plays to keep its planted foot on the ground, capped.
+func _move_rate() -> float:
+	var anim_speed := WALK_ANIM_SPEED if _walking() else RUN_ANIM_SPEED
+	return minf(SPEED * speed_scale / anim_speed, MAX_ANIM_RATE)
 
 
 func is_resting() -> bool:
@@ -153,7 +178,7 @@ func _enter(phase: Phase) -> void:
 		return
 	_anim.speed_scale = 1.0
 	if phase == Phase.ON or phase == Phase.OFF:
-		_anim.play(ANIM_MOVE, ANIM_BLEND)
+		_anim.play(_move_anim(), ANIM_BLEND)
 		return
 	var anim_name: String = REST_ANIMS[_rest][phase - Phase.DOWN]
 	_anim.play(anim_name, ANIM_BLEND)

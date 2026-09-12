@@ -387,7 +387,7 @@ func _nearest_standable(c: Vector3i, y: float = NAN) -> Vector3i:
 func _process(delta: float) -> void:
 	if _log_hitches and delta > 0.05:
 		print("hitch: %.0f ms at %s, %d chunks pending" % [delta * 1000.0, clock_text(), chunks.pending_count()])
-	player.speed_scale = Player.RUN_SCALE if Input.is_key_pressed(KEY_SHIFT) else 1.0
+	player.speed_scale = Player.WALK_SCALE if Input.is_key_pressed(KEY_SHIFT) else Player.RUN_SCALE
 	_advance_day(delta)
 	chunks.update_center(player.global_position)
 	folk.update(time_of_day)

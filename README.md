@@ -9,9 +9,10 @@ same scale; there is no zoom-in view.
 - 1 m cubes on a grid, character two cubes tall: the knight from the CC0
   KayKit Adventurers pack (assets/kaykit_adventurers, loaded at runtime with
   its rig and animations), with a sword and shield. It idles when it stops
-  and runs while it moves, turning toward each step; walking pace is
-  already a run for its short legs, so the run plays faster to keep up with
-  the ground, up to a cap past which the feet slide a little. Walking into a
+  and runs while it moves, turning toward each step; the run plays faster
+  to keep up with the ground, up to a cap past which the feet slide a
+  little. Shift held drops it to the townsfolk's walk, a fifth of the
+  pace, and the pack's amble is sped up the same way. Walking into a
   chair, stool or bed, or clicking one, uses it: the figure steps onto the
   seat or the mattress, sits or lies down, idles there, and gets up and
   steps back to its own cell the moment it is asked to move again. Getting
@@ -40,7 +41,7 @@ same scale; there is no zoom-in view.
   the market by the crossroads, lunch, more work, dinner,
   an evening by their fire or in an inn, then bed. They are Figures like
   the player, walking the same paths with the same animations and using
-  the same seats and beds. Only those within a few dozen cells of the
+  the same seats and beds, at a walking pace where the player runs. Only those within a few dozen cells of the
   player are walked anywhere: the world holds chunks around the player and
   nowhere else, so the rest simply stand where the hour says and start
   walking again when the player comes near. Nobody works outside the wall:
@@ -292,7 +293,7 @@ with `class_name` so the class cache exists):
 | Input | Action |
 |---|---|
 | W A S D or arrows | walk along the grid axes: W is up-right on screen, D down-right, S down-left, A up-left; two keys for a diagonal; hold to keep walking |
-| Shift | run: twice walking speed while held |
+| Shift | walk: a fifth of running speed while held, the pace of the townsfolk |
 | Left click | walk to the clicked column; clicks pass through sliced roofs and cut-down buildings |
 | Click or walk into a chair, stool or bed | sit or lie down on it; walking or clicking anywhere else gets up again |
 | Q / E | rotate camera 90 degrees |
