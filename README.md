@@ -185,7 +185,7 @@ same scale; there is no zoom-in view.
   two cells of a roomy room there; a fireplace only goes where that is
   possible) and a stack standing out of the roof; the character spawns at
   the south gate
-- Furniture from the CC0 KayKit Dungeon Remastered pack (assets/kaykit_dungeon,
+- Furniture from the CC0 KayKit Dungeon Asset Pack 1.1 (assets/kaykit_dungeon,
   loaded at runtime and scaled so a bed spans one by two cells), chosen by the
   letter each room carries on its layout map: shops get a counter of laden
   tables with stock behind it, living rooms a fireplace, a dining table with

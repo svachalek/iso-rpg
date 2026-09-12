@@ -81,6 +81,15 @@ cannot use `call()`.
   ignored by git and Godot); to add a model, copy its `.gltf` and `.bin`
   from `Assets/gltf/ColorN` and name it in `Nature` or `PROP_SPECS`.
   Colours 1 to 3 are greens, 4 teal, 5 and 6 autumn, 7 red, 8 pink.
+  `assets/kaykit_dungeon` is the same arrangement for the furniture, out of
+  `assets/KayKit_Dungeon_Pack_1.1_EXTRA`; name the model in
+  `FURNITURE_SPECS` and it loads as `.gltf`. It was the 2023 Dungeon
+  Remastered pack until 2026-09-12, swapped for 1.1 (licence 2026-07,
+  models 2024-05) which is the more recent release and holds every model
+  that was in use at identical size. The two gradient atlases differ only
+  in the second half of row 3, which nothing in use samples, so both draw
+  on the one material; a piece taken from there would need its own, as the
+  nature pack has.
 - The day runs in five minutes (`--daylen=`), and `main.time_of_day` is a
   fraction of one. One directional light is the sun by day and the moon by
   night: the shader knows a shadow pass only by the single `sun_forward`

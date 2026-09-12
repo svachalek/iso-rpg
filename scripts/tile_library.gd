@@ -746,7 +746,7 @@ static func _add_furniture(lib: MeshLibrary, atlas: Texture2D) -> void:
 		if spec.has("build"):
 			built.append(kind)
 			continue
-		var loaded := _load_gltf("res://assets/kaykit_dungeon/%s.glb" % spec["file"])
+		var loaded := _load_gltf("res://assets/kaykit_dungeon/%s.gltf" % spec["file"])
 		if loaded.is_empty():
 			continue
 		var model: ArrayMesh = loaded[0]
