@@ -1004,6 +1004,11 @@ static func _build_counter() -> ArrayMesh:
 # it; the outer 0.7 of the cell is open under the eaves.
 const WALL_Z0 := -0.5
 const WALL_Z1 := -0.2
+## Half the width of a doorway, house wall and partition alike. A figure is
+## about three quarters of a cube across the shoulders and walks through the
+## middle of the cell, so the frame gets what is left: the same 0.12 a wall
+## panel's edge post takes, and no jamb inside it.
+const DOOR_HALF := 0.38
 const PLASTER := Vector2i(0, 3)   # beige column of the atlas
 const GLASS := Vector2i(6, 2)
 
@@ -1031,9 +1036,9 @@ static func _build_wall(ground: bool, window: bool, door: bool) -> ArrayMesh:
 	var base := 0.1 if ground else -0.36
 	if ground:
 		if door:
-			_bevel_box(st, Vector3(-0.5, -0.5, -0.5), Vector3(-0.3, 0.1, -0.1), Swatch.STONE, 0, 0.03, yr)
-			_bevel_box(st, Vector3(0.3, -0.5, -0.5), Vector3(0.5, 0.1, -0.1), Swatch.STONE, 0, 0.03, yr)
-			_bevel_box(st, Vector3(-0.3, -0.5, -0.5), Vector3(0.3, -0.42, -0.1), Swatch.STONE, 0, 0.02, yr)
+			_bevel_box(st, Vector3(-0.5, -0.5, -0.5), Vector3(-DOOR_HALF, 0.1, -0.1), Swatch.STONE, 0, 0.03, yr)
+			_bevel_box(st, Vector3(DOOR_HALF, -0.5, -0.5), Vector3(0.5, 0.1, -0.1), Swatch.STONE, 0, 0.03, yr)
+			_bevel_box(st, Vector3(-DOOR_HALF, -0.5, -0.5), Vector3(DOOR_HALF, -0.42, -0.1), Swatch.STONE, 0, 0.02, yr)
 		else:
 			_bevel_box(st, Vector3(-0.5, -0.5, -0.5), Vector3(0.5, 0.1, -0.1), Swatch.STONE, 0, 0.03, yr)
 	else:
@@ -1043,11 +1048,11 @@ static func _build_wall(ground: bool, window: bool, door: bool) -> ArrayMesh:
 	_wall_beam(st, Vector3(0.38, post_base, WALL_Z0), Vector3(0.5, 2.5, WALL_Z1))
 	_wall_beam(st, Vector3(-0.38, 2.36, WALL_Z0), Vector3(0.38, 2.5, WALL_Z1))  # top plate
 	if door:
+		# No jambs inside the posts: the panel's own posts frame the opening,
+		# which needs every bit of the cell it can keep (see DOOR_HALF).
 		var top := 2.0 if ground else 2.0
-		_wall_beam(st, Vector3(-0.38, base, WALL_Z0), Vector3(-0.3, top, WALL_Z1))
-		_wall_beam(st, Vector3(0.3, base, WALL_Z0), Vector3(0.38, top, WALL_Z1))
-		_wall_beam(st, Vector3(-0.38, top, WALL_Z0), Vector3(0.38, top + 0.12, WALL_Z1))  # lintel
-		_wall_plaster(st, -0.38, top + 0.12, 0.38, 2.36, yr)
+		_wall_beam(st, Vector3(-DOOR_HALF, top, WALL_Z0), Vector3(DOOR_HALF, top + 0.12, WALL_Z1))  # lintel
+		_wall_plaster(st, -DOOR_HALF, top + 0.12, DOOR_HALF, 2.36, yr)
 	elif window:
 		var wx := 0.28
 		var wy0 := 0.95
@@ -1151,7 +1156,7 @@ static func _build_partition(arms: int, door: bool) -> ArrayMesh:
 		# A framed opening the width of the cell less the jambs, a lintel
 		# with plaster above it, under a top plate spanning the cell.
 		for sx: float in [-1.0, 1.0]:
-			_part_beam(st, Vector3(sx * 0.3, -0.5, -t), Vector3(sx * 0.5, 2.0, t), id)
+			_part_beam(st, Vector3(sx * DOOR_HALF, -0.5, -t), Vector3(sx * 0.5, 2.0, t), id)
 		_part_beam(st, Vector3(-0.5, 2.0, -t), Vector3(0.5, 2.12, t), id)   # lintel
 		_part_beam(st, Vector3(-0.5, 2.38, -t), Vector3(0.5, 2.5, t), id)   # top plate
 		_part_plaster(st, Vector3(-0.5, 2.12, -0.09), Vector3(0.5, 2.38, 0.09), id)

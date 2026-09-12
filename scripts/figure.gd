@@ -13,13 +13,15 @@ const RUN_SCALE := 2.0
 const TURN_SPEED := 14.0  # radians per second
 
 const MODEL_DIR := "res://assets/kaykit_adventurers/"
-const MODEL_SCALE := 0.8  # the pack's characters stand about 2.5 with their hats
+## The pack's characters stand about 3.1 tall; at 0.8 their hats grazed a
+## doorway's 2.4 of headroom and their shoulders filled it side to side.
+const MODEL_SCALE := 0.74
 const ANIM_IDLE := "Idle"
 const ANIM_MOVE := "Running_A"
 ## Ground speed at which a planted foot of ANIM_MOVE stays put at
 ## MODEL_SCALE, measured from the rig. Even walking pace is a run for legs
 ## this short: the pack's walk only covers about 0.6.
-const MOVE_ANIM_SPEED := 2.3
+const MOVE_ANIM_SPEED := 2.13
 ## The move animation plays faster to keep up with the ground, to a point:
 ## past it the feet blur, and sliding a little reads better.
 const MAX_ANIM_RATE := 2.4

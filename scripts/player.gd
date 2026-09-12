@@ -43,10 +43,11 @@ func _mark_stencil() -> void:
 func _add_xray_shell() -> void:
 	var mi := MeshInstance3D.new()
 	var capsule := CapsuleMesh.new()
-	capsule.radius = 0.46  # about as wide as the helmet, so the silhouette fits the figure
-	capsule.height = 2.0
+	# As wide as the helmet and as tall as the figure, so the silhouette fits.
+	capsule.radius = 0.43
+	capsule.height = 1.85
 	mi.mesh = capsule
 	mi.material_override = _xray
 	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	mi.position = Vector3(0, 1.0, 0)
+	mi.position = Vector3(0, 0.93, 0)
 	_body.add_child(mi)
