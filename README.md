@@ -239,6 +239,8 @@ Optional user args go after `--`:
     --yaw=DEG             with --walk: camera yaw for the screenshot
     --at=X,Z[,Y]          spawn at column X,Z (the first and last HUD cell coordinates) instead of the town gate, on the floor nearest Y
     --cave                spawn before the mouth of the cave nearest the spawn point (the gate, or --at)
+    --time=HH:MM          start at this time of day (or a fraction of a day)
+    --daylen=SECONDS      seconds in a day (default 300); 0 holds the clock
     --walk=cave           walk down that cave's tunnel to its landing
     --walk=seat           walk to the nearest chair or stool and sit on it
     --walk=bed            walk to the nearest bed and lie on it

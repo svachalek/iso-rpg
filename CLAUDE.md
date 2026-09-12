@@ -78,6 +78,11 @@ cannot use `call()`.
   ignored by git and Godot); to add a model, copy its `.gltf` and `.bin`
   from `Assets/gltf/ColorN` and name it in `Nature` or `PROP_SPECS`.
   Colours 1 to 3 are greens, 4 teal, 5 and 6 autumn, 7 red, 8 pink.
+- The day runs in five minutes (`--daylen=`), and `main.time_of_day` is a
+  fraction of one. One directional light is the sun by day and the moon by
+  night: the shader knows a shadow pass only by the single `sun_forward`
+  direction, so a second caster would be taken for the camera. Screenshots
+  of an hour want `--time=HH:MM --daylen=0`.
 - Sitting and lying: a piece says where the figure goes on it with `sit` or
   `lie` in `FURNITURE_SPECS`, in cubes from the anchor cell's centre before
   rotation (the model's own measurements, at `FURNITURE_SCALE`); the figure

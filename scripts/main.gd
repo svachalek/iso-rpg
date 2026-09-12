@@ -41,10 +41,34 @@ var _sun: DirectionalLight3D
 var _env: Environment
 var _torch: OmniLight3D
 var _rest_on_arrival: Variant = null  # feet cell of the seat or bed to use when the walk ends
+## The clock everything in the world keeps: a fraction of a day. Starts in
+## the morning; `--daylen=0` holds it still.
+var time_of_day := 0.33
+var day_seconds := DAY_SECONDS
+var _sky_mat: ProceduralSkyMaterial
+var _sky_energy := SUN_ENERGY
+var _light_level := 1.0  # 0 from dusk to dawn, 1 in broad daylight
 var _cave_fill: DirectionalLight3D
 var _figure_shadows := true
 const SUN_ENERGY := 1.3
 const CAVE_AMBIENT := Color(0.45, 0.48, 0.58)  # the fill light underground, where the sky cannot reach
+
+## A day runs in five minutes. The time of day is a fraction of one: 0 is
+## midnight, DAWN sunrise, 0.5 noon, DUSK sunset.
+const DAY_SECONDS := 300.0
+const DAWN := 0.25
+const DUSK := 0.79
+const MOON_ENERGY := 0.22
+const SUN_COLOR_DAY := Color(1.0, 0.97, 0.9)
+const SUN_COLOR_LOW := Color(1.0, 0.70, 0.42)  # near the horizon, at either end of the day
+const MOON_COLOR := Color(0.62, 0.72, 1.0)
+const NIGHT_AMBIENT := Color(0.17, 0.21, 0.36)
+const SKY_DAY_TOP := Color(0.35, 0.55, 0.85)
+const SKY_DAY_HORIZON := Color(0.75, 0.82, 0.92)
+const SKY_LOW_TOP := Color(0.24, 0.28, 0.48)
+const SKY_LOW_HORIZON := Color(0.95, 0.58, 0.34)
+const SKY_NIGHT_TOP := Color(0.02, 0.04, 0.10)
+const SKY_NIGHT_HORIZON := Color(0.07, 0.09, 0.19)
 ## How far below the natural surface the character is, 0..1: the slice
 ## reaches the whole view and every camera-facing cave wall is knocked down.
 var _underground := 0.0
@@ -134,7 +158,12 @@ func _ready() -> void:
 	var spawn := town.gate_cell
 	var spawn_y := NAN  # a floor to prefer, when the column has several
 	for a in OS.get_cmdline_user_args():
-		if a.begins_with("--at="):
+		if a.begins_with("--time="):
+			time_of_day = _parse_time(a.trim_prefix("--time="))
+		elif a.begins_with("--daylen="):
+			# Seconds in a day; 0 holds the clock still, for screenshots.
+			day_seconds = maxf(float(a.trim_prefix("--daylen=")), 0.0)
+		elif a.begins_with("--at="):
 			# Spawn at a column instead of the town gate; height comes from
 			# the terrain, or from the third value (the floor nearest it).
 			var parts := a.trim_prefix("--at=").split(",")
@@ -221,6 +250,7 @@ func _setup_environment() -> void:
 	sky_mat.ground_bottom_color = Color(0.25, 0.28, 0.32)
 	sky_mat.ground_horizon_color = Color(0.75, 0.82, 0.92)
 	sky.sky_material = sky_mat
+	_sky_mat = sky_mat
 	env.background_mode = Environment.BG_SKY
 	env.sky = sky
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
@@ -231,6 +261,59 @@ func _setup_environment() -> void:
 	we.environment = env
 	add_child(we)
 	_env = env
+
+
+## Moves the clock on and puts the sky where the hour says.
+func _advance_day(delta: float) -> void:
+	if day_seconds > 0.0:
+		time_of_day = fposmod(time_of_day + delta / day_seconds, 1.0)
+	_update_sky()
+
+
+## One directional light serves as the sun by day and the moon by night: it
+## climbs from the east, crosses at noon and sets in the west, dimming and
+## reddening as it nears the horizon. One light and no more, because the
+## shader tells a shadow pass from the camera's view by the single
+## direction in `sun_forward`; a second caster would have no way to say so.
+func _update_sky() -> void:
+	var day := time_of_day >= DAWN and time_of_day < DUSK
+	var p := (time_of_day - DAWN) / (DUSK - DAWN) if day \
+		else fposmod(time_of_day - DUSK, 1.0) / (1.0 - DUSK + DAWN)
+	var height := sin(PI * p)  # 0 at the horizon, 1 overhead
+	_sun.rotation_degrees = Vector3(-(6.0 + 62.0 * height), lerpf(-105.0, 35.0, p), 0.0)
+	_cave_fill.rotation_degrees = _sun.rotation_degrees
+	# Ramped, so dawn and dusk hand over gradually rather than switching.
+	var lit := smoothstep(0.0, 0.35, height)
+	var top := SKY_NIGHT_TOP
+	var horizon := SKY_NIGHT_HORIZON
+	if day:
+		_sky_energy = lerpf(0.15, SUN_ENERGY, lit)
+		_sun.light_color = SUN_COLOR_LOW.lerp(SUN_COLOR_DAY, lit)
+		_light_level = lit
+		top = SKY_LOW_TOP.lerp(SKY_DAY_TOP, lit)
+		horizon = SKY_LOW_HORIZON.lerp(SKY_DAY_HORIZON, lit)
+	else:
+		_sky_energy = MOON_ENERGY * lerpf(0.45, 1.0, lit)
+		_sun.light_color = MOON_COLOR
+		_light_level = 0.0
+	RenderingServer.global_shader_parameter_set("sun_forward", -_sun.global_transform.basis.z)
+	_sky_mat.sky_top_color = top
+	_sky_mat.sky_horizon_color = horizon
+	_sky_mat.ground_horizon_color = horizon
+
+
+## The clock as hours and minutes.
+func clock_text() -> String:
+	var mins := int(time_of_day * 24.0 * 60.0)
+	return "%02d:%02d" % [mins / 60, mins % 60]
+
+
+## `--time=HH:MM`, or a fraction of a day.
+static func _parse_time(s: String) -> float:
+	if ":" in s:
+		var parts := s.split(":")
+		return fposmod((float(parts[0]) + float(parts[1]) / 60.0) / 24.0, 1.0)
+	return fposmod(float(s), 1.0)
 
 
 func _setup_marker() -> void:
@@ -272,14 +355,15 @@ func _nearest_standable(c: Vector3i, y: float = NAN) -> Vector3i:
 
 func _process(delta: float) -> void:
 	player.speed_scale = Player.RUN_SCALE if Input.is_key_pressed(KEY_SHIFT) else 1.0
+	_advance_day(delta)
 	chunks.update_center(player.global_position)
 	_covered = _is_covered()
 	_update_occlusion(delta)
 	_update_shader_globals()
 	if _auto_zoom_on:
 		rig.context_zoom = _context_zoom()
-	hud.text = "%s\nFPS %d   cell %s%s   chunks %d loaded, %d pending   zoom %s   knock-down %s   slice %s   blend %s" % [
-		_status, Engine.get_frames_per_second(), player.cell,
+	hud.text = "%s\nFPS %d   %s   cell %s%s   chunks %d loaded, %d pending   zoom %s   knock-down %s   slice %s   blend %s" % [
+		_status, Engine.get_frames_per_second(), clock_text(), player.cell,
 		"   underground %d%%" % int(_underground * 100.0) if _underground > 0.0 else "",
 		chunks.loaded_count(), chunks.pending_count(),
 		"auto" if _auto_zoom_on else "manual",
@@ -337,18 +421,22 @@ func _slice_radius() -> float:
 ## away there is nothing to light the rock the sun and the torch miss, and
 ## unlit stone reads as a hole in the world rather than as stone.
 func _update_lighting() -> void:
-	_sun.light_energy = lerpf(SUN_ENERGY, 0.35, _underground)
+	var night := 1.0 - _light_level
+	_sun.light_energy = lerpf(_sky_energy, _sky_energy * 0.27, _underground)
 	_cave_fill.light_energy = 0.15 * _underground
 	_env.background_energy_multiplier = lerpf(1.0, 0.05, _underground)
-	_env.ambient_light_sky_contribution = lerpf(0.8, 0.0, _underground)
-	_env.ambient_light_color = Color.BLACK.lerp(CAVE_AMBIENT, _underground)
-	_env.ambient_light_energy = lerpf(1.0, 0.32, _underground)
-	_torch.light_energy = 2.5 * _underground
+	# After dark the sky has nothing to give, so the ambient colour of the
+	# night carries more of the light instead, or nothing would read at all.
+	_env.ambient_light_sky_contribution = lerpf(lerpf(0.8, 0.35, night), 0.0, _underground)
+	_env.ambient_light_color = Color.BLACK.lerp(NIGHT_AMBIENT, night).lerp(CAVE_AMBIENT, _underground)
+	_env.ambient_light_energy = lerpf(lerpf(1.0, 1.3, night), 0.32, _underground)
+	# The torch is lit underground, and again after dark.
+	_torch.light_energy = 2.5 * maxf(_underground, night)
 	# The rock the knock-down and the slice cut away still stands in the
 	# torch's way underground (see the shader), so its shadows are the
 	# real ones; above ground it is dark and casts nothing.
 	_torch.shadow_enabled = _underground > 0.01
-	var figure_shadows := _underground < 0.5
+	var figure_shadows := _underground < 0.5 and _light_level > 0.5
 	if figure_shadows != _figure_shadows:
 		_figure_shadows = figure_shadows
 		player.set_casts_shadow(figure_shadows)
