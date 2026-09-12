@@ -11,6 +11,10 @@ extends Node3D
 var world_gen: WorldGen
 var mesh_library: MeshLibrary
 
+## A chunk has come or gone, so what anything remembered of its columns is
+## no longer to be trusted.
+signal chunk_changed(k: Vector2i)
+
 var _chunks := {}  # Vector2i -> GridMap
 var _surfaces := {}  # Vector2i -> PackedInt32Array of surface cells per column
 var _floors := {}    # Vector2i -> Dictionary(column index -> PackedInt32Array of cave feet cells)
@@ -92,6 +96,7 @@ func update_center(world_pos: Vector3) -> void:
 		if not _in_reach(k):
 			_chunks[k].queue_free()
 			_chunks.erase(k)
+			chunk_changed.emit(k)
 			_surfaces.erase(k)
 			_floors.erase(k)
 
@@ -134,6 +139,7 @@ func _add(k: Vector2i, build: WorldGen.ChunkBuild) -> void:
 	_chunks[k] = gm
 	_surfaces[k] = build.surface
 	_floors[k] = build.floors
+	chunk_changed.emit(k)
 
 
 ## Tile at a world cell, or GridMap.INVALID_CELL_ITEM if empty or not loaded.

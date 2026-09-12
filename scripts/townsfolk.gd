@@ -16,7 +16,11 @@ extends Node3D
 const MODELS: Array[String] = ["Barbarian.glb", "Mage.glb", "Rogue.glb", "Rogue_Hooded.glb"]
 const SIM_RADIUS := 44.0   # cells from the player within which people walk
 const SHOW_RADIUS := 60.0  # and beyond which they are not drawn at all
-const FARM_RING := 10      # cells beyond the town wall the fields lie
+const LEG_CELLS := 10      # cells of a walk planned at a time
+const LEG_MARGIN := 3      # and how far around it the search may look
+const PLAN_GAP := 3        # frames between plans, to spread a rush of them
+const FULL_SPAN := 24      # cells: further than this nobody is searched for the whole way
+const TRIES_A_FRAME := 2   # people taken off the pending list in one frame
 const MAX_PEOPLE := 14
 
 ## When each of the day's stops begins, as a fraction of a day.
@@ -45,24 +49,37 @@ class Person:
 	var settled := false     # standing (or sitting) where this stop wants
 
 
+var _plans := 0       # paths planned, and what they cost: A* is the dear part
+var _plan_ms := 0.0
+var _worst_ms := 0.0
+var _worst_span := 0     # cells between the ends of the dearest plan
+var _worst_full := false  # and whether that one went all the way, not a leg
+var _tries := 0       # times someone was taken off the pending list
+## Tells whether a point is somewhere the cuts have taken away, so anyone
+## standing there should not be drawn. Set by main to its own test, the
+## one that also lets clicks through what the viewer cannot see.
+var hidden_test: Callable
+
+var _cool := 0  # frames to wait before planning the next path
+var _spare_counters: Array[Vector3i] = []  # shop counters nobody works at yet
 var _people: Array[Person] = []
 var _pending: Array[Person] = []  # waiting for a path; one is planned a frame
 var _town: TownBuilder
-var _gen: WorldGen
 var _finder: GridPathfinder
 var _player: Figure
 
 
 ## Fills the town from its houses: whoever has a bed gets a life around it.
-func setup(town: TownBuilder, gen: WorldGen, finder: GridPathfinder, player: Figure) -> void:
+func setup(town: TownBuilder, finder: GridPathfinder, player: Figure) -> void:
 	_town = town
-	_gen = gen
 	_finder = finder
 	_player = player
 	var inns: Array = []
 	for home in town.homes:
 		if home.layout.begins_with("inn"):
 			inns.append(home)
+		for c: Array in home.of_kind(COUNTERS):
+			_spare_counters.append(c[0])
 	for home in town.homes:
 		if _people.size() >= MAX_PEOPLE:
 			break
@@ -88,18 +105,20 @@ func _add_person(home: TownBuilder.Home, bed: Vector3i, inns: Array) -> void:
 
 	var seats := home.of_kind(SEATS)
 	var table: Vector3i = seats[0][0] if not seats.is_empty() else home.door
-	var counters := home.of_kind(COUNTERS)
-	var work: Vector3i = counters[0][0] if not counters.is_empty() else _field(i)
+	var work := _work_spot(home)
 	var evening := _evening_spot(home, inns, i)
+	# Everyone shifted a few minutes off their neighbours, so the whole
+	# town does not change its mind on the same tick.
+	var off := float(i) * 0.004
 	p.stops = [
 		[0.0, bed],
-		[BREAKFAST, table],
-		[WORK_AM, work],
-		[LUNCH, table],
-		[WORK_PM, work],
-		[DINNER, table],
-		[EVENING, evening],
-		[BEDTIME, bed],
+		[BREAKFAST + off, table],
+		[WORK_AM + off, work],
+		[LUNCH + off, table],
+		[WORK_PM + off, work],
+		[DINNER + off, table],
+		[EVENING + off, evening],
+		[BEDTIME + off, bed],
 	]
 	_people.append(p)
 
@@ -122,19 +141,31 @@ func _evening_spot(home: TownBuilder.Home, inns: Array, i: int) -> Vector3i:
 	return home.door
 
 
-## A patch of ground to work, on a ring outside the town wall, clear of
-## water. The generator knows the height anywhere, loaded or not.
-func _field(i: int) -> Vector3i:
-	var centre := _town.origin + Vector2i(TownBuilder.SIZE / 2, TownBuilder.SIZE / 2)
-	for ring in 5:
-		var r := float(TownBuilder.SIZE / 2 + TownBuilder.MARGIN + FARM_RING + ring * 6)
-		var a := TAU * (float(i) + 0.5) / float(MAX_PEOPLE) + float(ring) * 0.3
-		var x := centre.x + int(round(cos(a) * r))
-		var z := centre.y + int(round(sin(a) * r))
-		var h := _gen.height_at(x, z)
-		if h > _gen.water_level_at(x, z):
-			return Vector3i(x, h + 1, z)
-	return Vector3i(centre.x, _town.height + 1, centre.y)
+## A day's work: one's own shop counter, else a spare counter in somebody
+## else's shop, else a place at the market by the crossroads. Nobody works
+## outside the wall: the walk out through the gate is the longest path
+## anyone in the town would ever ask for, and it costs more to plan than
+## everything else these people do put together. Fields can come later
+## with a cheaper way out.
+func _work_spot(home: TownBuilder.Home) -> Vector3i:
+	for c: Array in home.of_kind(COUNTERS):
+		if _spare_counters.has(c[0]):
+			_spare_counters.erase(c[0])
+			return c[0]
+	if not _spare_counters.is_empty():
+		return _spare_counters.pop_front()
+	return _market(_people.size())
+
+
+## A place to stand at the market, along the streets either side of the
+## crossroads in the middle of town.
+func _market(i: int) -> Vector3i:
+	var c := _town.origin + Vector2i(TownBuilder.STREET, TownBuilder.STREET)
+	var step := 2 + (i % 5) * 2
+	var along := Vector2i(step, 0) if i % 2 == 0 else Vector2i(0, step)
+	if i % 4 >= 2:
+		along = -along
+	return Vector3i(c.x + along.x, _town.height + 1, c.y + along.y)
 
 
 ## The stop the hour calls for: the last one to have begun.
@@ -154,15 +185,26 @@ func update(time: float) -> void:
 			p.at = i
 			_send(p, p.stops[i][1])
 		var dist := p.fig.global_position.distance_to(here)
-		p.fig.visible = dist < SHOW_RADIUS
+		# Out of sight when the cuts have taken the floor they stand on:
+		# the slice and the occluder cuts are the shader's doing and never
+		# touched these figures, so without this they float in the open.
+		var cut: bool = hidden_test.is_valid() and bool(hidden_test.call(p.fig.global_position + Vector3(0, 0.5, 0)))
+		p.fig.visible = dist < SHOW_RADIUS and not cut
 		# Someone who walked in from out of sight, or was put down before
 		# their chunk was there, tries again once the player is near.
 		if not p.settled and not p.walking and dist < SIM_RADIUS and not _pending.has(p):
 			_pending.append(p)
-	# One path a frame: everybody changing places on the same tick would
-	# plan a dozen searches at once, and that shows.
-	while not _pending.is_empty():
+	# One path every few frames: everybody changing places on the same tick
+	# would plan a dozen searches at once, and that shows.
+	if _cool > 0:
+		_cool -= 1
+		return
+	var tries := 0
+	while not _pending.is_empty() and tries < TRIES_A_FRAME:
+		tries += 1
+		_tries += 1
 		if _start_walk(_pending.pop_front()):
+			_cool = PLAN_GAP
 			break
 
 
@@ -192,13 +234,43 @@ func _start_walk(p: Person) -> bool:
 	if goal == p.fig.cell:
 		_settle(p)
 		return false
-	var path := _finder.find_path(p.fig.cell, goal)
+	# Planned a leg at a time: an A* covers every column of the box between
+	# its ends, so one walk across the town costs more than a dozen short
+	# ones. The rest of the way is planned on arrival.
+	var spot: Vector3i = goal
+	var leg := _leg(p.fig.cell, spot)
+	var t0 := Time.get_ticks_usec()
+	var path := _finder.find_path(p.fig.cell, leg, LEG_MARGIN)
+	if path.is_empty() and leg != spot and _span(p.fig.cell, spot) <= FULL_SPAN:
+		# Nothing that way around, and near enough to search the whole way.
+		# Further than that it is cheaper to put them there than to look.
+		path = _finder.find_path(p.fig.cell, spot)
+	var ms := float(Time.get_ticks_usec() - t0) / 1000.0
+	_plans += 1
+	_plan_ms += ms
+	if ms > _worst_ms:
+		_worst_ms = ms
+		_worst_span = maxi(absi(leg.x - p.fig.cell.x), absi(leg.z - p.fig.cell.z))
+		_worst_full = leg == spot
 	if path.is_empty():
 		_place(p)
 		return false
 	p.fig.set_path(path)
 	p.walking = true
 	return true
+
+
+## As far along the way to `to` as one plan should reach, or `to` itself
+## when it is near enough. Falls back to the far end when there is nothing
+## to stand on partway.
+func _leg(from: Vector3i, to: Vector3i) -> Vector3i:
+	var d := Vector2(to.x - from.x, to.z - from.z)
+	if maxf(absf(d.x), absf(d.y)) <= float(LEG_CELLS):
+		return to
+	var step := d.normalized() * float(LEG_CELLS)
+	var part: Variant = _finder.stand_cell_near(
+		from.x + int(round(step.x)), from.z + int(round(step.y)), float(from.y))
+	return part if part != null else to
 
 
 ## The cell a person actually stands on for their stop: beside the piece
@@ -253,7 +325,14 @@ func report() -> String:
 		lines.append("  %-16s stop %d target %s at %s %s%s" % [
 			p.fig.model_file.trim_suffix(".glb"), p.at, p.target, p.fig.cell, state,
 			"" if p.fig.visible else " (out of sight)"])
+	lines.append("  %d paths planned, %.0f ms in all, worst %.1f ms over %d cells (%s); %d tries off the pending list" % [
+		_plans, _plan_ms, _worst_ms, _worst_span, "whole way" if _worst_full else "a leg", _tries])
 	return "townsfolk:\n" + "\n".join(lines)
+
+
+## Cells between two places, along whichever axis is longer.
+static func _span(a: Vector3i, b: Vector3i) -> int:
+	return maxi(absi(a.x - b.x), absi(a.z - b.z))
 
 
 static func _nearest(cells: Array[Vector3i], to: Vector3i) -> Variant:

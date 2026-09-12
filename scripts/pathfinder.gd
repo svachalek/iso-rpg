@@ -17,6 +17,21 @@ var _gen: WorldGen
 func _init(cm: ChunkManager, gen: WorldGen) -> void:
 	_cm = cm
 	_gen = gen
+	cm.chunk_changed.connect(_forget_chunk)
+
+
+## What a column can be stood on does not change while its chunk is
+## loaded, and working it out is the dear part of planning a path: an A*
+## over a box twenty cells across asks a thousand columns. Kept here
+## between searches, it is worked out once for as long as the chunk lasts.
+var _stand_cache := {}  # Vector2i column -> Array[Vector3i]
+
+
+func _forget_chunk(k: Vector2i) -> void:
+	var size := _cm.chunk_size
+	for z in size:
+		for x in size:
+			_stand_cache.erase(Vector2i(k.x * size + x, k.y * size + z))
 
 
 func item(c: Vector3i) -> int:
@@ -107,10 +122,14 @@ func is_floor(c: Vector3i) -> bool:
 ## steps below ground, the ground level, then each upper floor or stair
 ## step above it.
 func stand_cells(x: int, z: int) -> Array[Vector3i]:
+	var key := Vector2i(x, z)
+	var known: Variant = _stand_cache.get(key)
+	if known != null:
+		return known
 	var out: Array[Vector3i] = []
 	var s := _cm.surface_cell(x, z)
 	if s < 0:
-		return out
+		return out  # not loaded: nothing to remember yet
 	var g: Variant = stand_cell(x, z)
 	for y in _cm.floor_cells(x, z):
 		var c := Vector3i(x, y, z)
@@ -122,6 +141,7 @@ func stand_cells(x: int, z: int) -> Array[Vector3i]:
 		var c := Vector3i(x, y, z)
 		if (out.is_empty() or c.y > out[-1].y) and is_floor(c) and is_standable(c):
 			out.append(c)
+	_stand_cache[key] = out
 	return out
 
 
@@ -168,12 +188,16 @@ func step_target(from: Vector3i, dx: int, dz: int) -> Variant:
 
 ## Path from `start` to `goal` as a list of feet cells, excluding `start`.
 ## Empty if unreachable or too far apart.
-func find_path(start: Vector3i, goal: Vector3i) -> Array[Vector3i]:
+## `margin` is how far outside the box between the ends the search may
+## wander, to get around what stands between them. Every column in that
+## box becomes a node, so a wide margin on a short walk costs more than
+## the walk itself: the townsfolk ask for a narrow one.
+func find_path(start: Vector3i, goal: Vector3i, margin: int = MARGIN) -> Array[Vector3i]:
 	var out: Array[Vector3i] = []
-	var minx := mini(start.x, goal.x) - MARGIN
-	var maxx := maxi(start.x, goal.x) + MARGIN
-	var minz := mini(start.z, goal.z) - MARGIN
-	var maxz := maxi(start.z, goal.z) + MARGIN
+	var minx := mini(start.x, goal.x) - margin
+	var maxx := maxi(start.x, goal.x) + margin
+	var minz := mini(start.z, goal.z) - margin
+	var maxz := maxi(start.z, goal.z) + margin
 	if maxx - minx > MAX_SPAN or maxz - minz > MAX_SPAN:
 		return out
 
@@ -181,6 +205,7 @@ func find_path(start: Vector3i, goal: Vector3i) -> Array[Vector3i]:
 	var ids := {}  # Vector3i feet cell -> id
 	var cells: Array[Vector3i] = []  # id -> feet cell
 	var by_col := {}  # Vector2i column -> Array[Vector3i] feet cells
+	var heights := {}  # Vector3i feet cell -> world height of the feet there
 	for z in range(minz, maxz + 1):
 		for x in range(minx, maxx + 1):
 			var cs := stand_cells(x, z)
@@ -189,7 +214,12 @@ func find_path(start: Vector3i, goal: Vector3i) -> Array[Vector3i]:
 			by_col[Vector2i(x, z)] = cs
 			for c in cs:
 				ids[c] = cells.size()
-				astar.add_point(cells.size(), Vector3(c.x, feet_height(c), c.z))
+				# Kept: every neighbour check below asks for both ends'
+				# heights, and each one is a lookup through the chunks.
+				# A search of a few hundred columns asks thousands of times.
+				var h := feet_height(c)
+				heights[c] = h
+				astar.add_point(cells.size(), Vector3(c.x, h, c.z))
 				cells.append(c)
 
 	for col: Vector2i in by_col:
@@ -202,13 +232,13 @@ func find_path(start: Vector3i, goal: Vector3i) -> Array[Vector3i]:
 					if not by_col.has(ncol):
 						continue
 					for n: Vector3i in by_col[ncol]:
-						if not _can_step(c, n):
+						if absf(float(heights[c]) - float(heights[n])) > 1.0:
 							continue
 						if dx != 0 and dz != 0:
 							# No cutting corners around blocked or steep cells.
-							if not _step_ok(c, col + Vector2i(dx, 0), by_col):
+							if not _step_ok(c, col + Vector2i(dx, 0), by_col, heights):
 								continue
-							if not _step_ok(c, col + Vector2i(0, dz), by_col):
+							if not _step_ok(c, col + Vector2i(0, dz), by_col, heights):
 								continue
 						astar.connect_points(ids[c], ids[n])
 
@@ -278,10 +308,11 @@ func _piece(a: Vector3i) -> Array:
 	return [kind, a, posmod(TileLibrary.rotation_k(_cm.get_cell_orientation(a)) - turn, 4)]
 
 
-func _step_ok(from: Vector3i, col: Vector2i, by_col: Dictionary) -> bool:
+func _step_ok(from: Vector3i, col: Vector2i, by_col: Dictionary, heights: Dictionary) -> bool:
 	if not by_col.has(col):
 		return false
+	var fh: float = heights[from]
 	for c: Vector3i in by_col[col]:
-		if _can_step(from, c):
+		if absf(fh - float(heights[c])) <= 1.0:
 			return true
 	return false

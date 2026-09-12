@@ -46,6 +46,7 @@ var _rest_on_arrival: Variant = null  # feet cell of the seat or bed to use when
 ## the morning; `--daylen=0` holds it still.
 var time_of_day := 0.33
 var day_seconds := DAY_SECONDS
+var _log_hitches := false  # --hitch: say when a frame takes more than 50 ms
 var _sky_mat: ProceduralSkyMaterial
 var _sky_energy := SUN_ENERGY
 var _light_level := 1.0  # 0 from dusk to dawn, 1 in broad daylight
@@ -60,6 +61,7 @@ const DAY_SECONDS := 300.0
 const DAWN := 0.25
 const DUSK := 0.79
 const MOON_ENERGY := 0.22
+const SUN_STEP_SECONDS := 1.0  # how often the light turns at all; see _update_sky
 const SUN_COLOR_DAY := Color(1.0, 0.97, 0.9)
 const SUN_COLOR_LOW := Color(1.0, 0.70, 0.42)  # near the horizon, at either end of the day
 const MOON_COLOR := Color(0.62, 0.72, 1.0)
@@ -158,6 +160,7 @@ func _ready() -> void:
 
 	var spawn := town.gate_cell
 	var spawn_y := NAN  # a floor to prefer, when the column has several
+	_log_hitches = "--hitch" in OS.get_cmdline_user_args()
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--time="):
 			time_of_day = _parse_time(a.trim_prefix("--time="))
@@ -203,7 +206,8 @@ func _ready() -> void:
 	folk = Townsfolk.new()
 	folk.name = "Townsfolk"
 	add_child(folk)
-	folk.setup(town, gen, finder, player)
+	folk.hidden_test = _is_hidden_point
+	folk.setup(town, finder, player)
 
 	rig = CameraRig.new()
 	rig.name = "CameraRig"
@@ -225,11 +229,18 @@ func _setup_environment() -> void:
 	# Four splits even though the camera is orthographic: one spreads the map
 	# over the camera's whole depth, and small shadows (a chimney's on its
 	# roof) break up into grain.
+	sun.shadow_enabled = not ("--noshadows" in OS.get_cmdline_user_args())
 	sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_4_SPLITS
-	sun.directional_shadow_max_distance = 200.0
+	# Only as far as the camera shows: the cascades cover that distance with
+	# a fixed number of texels, and the smaller each texel is, the less a
+	# shadow edge crawls as the sun turns through the day.
+	sun.directional_shadow_max_distance = 120.0
 	# A visibly sized sun gives soft, distance-dependent shadow edges.
-	sun.light_angular_distance = 1.5
-	sun.shadow_blur = 1.5
+	# A softer edge also hides what is left of the crawl as the sun turns:
+	# the cascades are fitted to the light, so every turn of it shifts
+	# their texels, and a hard edge shows each shift.
+	sun.light_angular_distance = 2.2
+	sun.shadow_blur = 2.0
 	add_child(sun)
 	_sun = sun
 	# The shader tells the sun's shadow pass from the camera's view by this.
@@ -286,8 +297,21 @@ func _update_sky() -> void:
 	var p := (time_of_day - DAWN) / (DUSK - DAWN) if day \
 		else fposmod(time_of_day - DUSK, 1.0) / (1.0 - DUSK + DAWN)
 	var height := sin(PI * p)  # 0 at the horizon, 1 overhead
-	_sun.rotation_degrees = Vector3(-(6.0 + 62.0 * height), lerpf(-105.0, 35.0, p), 0.0)
-	_cave_fill.rotation_degrees = _sun.rotation_degrees
+	# The light turns once a second, not every frame. The shadow cascades
+	# are fitted to it, so any turn at all shifts their whole texel grid
+	# and every shadow edge resamples; the size of the turn hardly matters,
+	# only how often it happens. One plain step a second reads better than
+	# a hundred small ones.
+	var sun_time := time_of_day
+	if day_seconds > 0.0:
+		sun_time = floorf(time_of_day * day_seconds / SUN_STEP_SECONDS) * SUN_STEP_SECONDS / day_seconds
+	var pd := (sun_time - DAWN) / (DUSK - DAWN) if day \
+		else fposmod(sun_time - DUSK, 1.0) / (1.0 - DUSK + DAWN)
+	var turned := Vector3(-(6.0 + 62.0 * sin(PI * pd)), lerpf(-105.0, 35.0, pd), 0.0)
+	if turned != _sun.rotation_degrees:
+		_sun.rotation_degrees = turned
+		_cave_fill.rotation_degrees = turned
+		RenderingServer.global_shader_parameter_set("sun_forward", -_sun.global_transform.basis.z)
 	# Ramped, so dawn and dusk hand over gradually rather than switching.
 	var lit := smoothstep(0.0, 0.35, height)
 	var top := SKY_NIGHT_TOP
@@ -302,7 +326,6 @@ func _update_sky() -> void:
 		_sky_energy = MOON_ENERGY * lerpf(0.45, 1.0, lit)
 		_sun.light_color = MOON_COLOR
 		_light_level = 0.0
-	RenderingServer.global_shader_parameter_set("sun_forward", -_sun.global_transform.basis.z)
 	_sky_mat.sky_top_color = top
 	_sky_mat.sky_horizon_color = horizon
 	_sky_mat.ground_horizon_color = horizon
@@ -360,6 +383,8 @@ func _nearest_standable(c: Vector3i, y: float = NAN) -> Vector3i:
 
 
 func _process(delta: float) -> void:
+	if _log_hitches and delta > 0.05:
+		print("hitch: %.0f ms at %s, %d chunks pending" % [delta * 1000.0, clock_text(), chunks.pending_count()])
 	player.speed_scale = Player.RUN_SCALE if Input.is_key_pressed(KEY_SHIFT) else 1.0
 	_advance_day(delta)
 	chunks.update_center(player.global_position)

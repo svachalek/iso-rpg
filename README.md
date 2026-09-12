@@ -26,21 +26,31 @@ same scale; there is no zoom-in view.
 - A day and a night in five minutes (`--daylen=`): one directional light is
   the sun by day and the moon by night, climbing from the east, crossing at
   noon and setting in the west, reddening as it nears the horizon. The sky,
-  the ambient and its sky contribution follow the hour; after dark the
+  the ambient and its sky contribution follow the hour. The light turns
+  once a second rather than every frame: the shadow cascades are fitted to
+  it, so any turn shifts their texels and every shadow edge with them, and
+  one plain step a second reads better than a hundred small ones. After dark the
   night's own ambient carries the light, and the character's torch lights
   as it does underground. It stays one light because the tile shader knows
   a shadow pass only by the single `sun_forward` direction
 - Townsfolk (scripts/townsfolk.gd): one to every house with a bed, in the
   pack's other four characters. Each keeps the same day — asleep in their
-  own bed, breakfast at their table, a morning's work at their shop
-  counter or out in the fields beyond the wall, lunch, more work, dinner,
+  own bed, breakfast at their table, a morning's work at their own shop
+  counter, at a spare counter in somebody else's shop or at a place at
+  the market by the crossroads, lunch, more work, dinner,
   an evening by their fire or in an inn, then bed. They are Figures like
   the player, walking the same paths with the same animations and using
   the same seats and beds. Only those within a few dozen cells of the
   player are walked anywhere: the world holds chunks around the player and
   nowhere else, so the rest simply stand where the hour says and start
-  walking again when the player comes near. One path is planned a frame,
-  since everyone changes place on the same tick
+  walking again when the player comes near. Nobody works outside the wall:
+  the walk out through the gate is the longest path anyone would ask for
+  and costs more to plan than everything else they do together. A walk is
+  planned ten cells at a time and one plan every few frames, since
+  everyone changes place on the same tick, and each person's hours are
+  shifted a few minutes off their neighbours'. Anyone standing on a floor
+  the slice or the occluder cut has taken away is not drawn: those cuts
+  are the shader's doing and never touched these figures
 - The ground surface is a heightfield on the grid vertices: each vertex is
   the mean of the continuous terrain height of the four columns around it,
   snapped to quarter cubes. Every column reads its four corners from that
@@ -261,6 +271,8 @@ Optional user args go after `--`:
     --daylen=SECONDS      seconds in a day (default 300); 0 holds the clock
     --walk=cave           walk down that cave's tunnel to its landing
     --folk                wait for the townsfolk to settle, say where they all are, quit
+    --hitch               print a line whenever a frame takes more than 50 ms
+    --noshadows           no sun shadows, to tell shadow trouble from the rest
     --walk=seat           walk to the nearest chair or stool and sit on it
     --walk=bed            walk to the nearest bed and lie on it
     --shapes              with --nowalk: lay out every shape and rotation by the gate

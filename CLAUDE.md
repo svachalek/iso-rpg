@@ -83,6 +83,19 @@ cannot use `call()`.
   night: the shader knows a shadow pass only by the single `sun_forward`
   direction, so a second caster would be taken for the camera. Screenshots
   of an hour want `--time=HH:MM --daylen=0`.
+- Shadows crawl whenever the sun turns: the cascades are fitted to the
+  light, so any rotation shifts their texel grid and every shadow edge
+  resamples. How far it turns hardly matters, only how often, which is why
+  the light steps once a second (`SUN_STEP_SECONDS`) while its colour goes
+  on changing smoothly. `--noshadows` tells shadow trouble from the rest;
+  comparing two frozen times a step apart measures what a step costs.
+- Planning a path is the dearest thing the townsfolk do, and its cost goes
+  with the number of columns in the box between its ends, not the distance
+  walked: a walk is planned `LEG_CELLS` at a time with a narrow `margin`,
+  and `find_path` keeps every cell's feet height for the neighbour checks.
+  `GridPathfinder` remembers each column's stand cells until its chunk
+  changes (`ChunkManager.chunk_changed`). `--hitch` prints slow frames and
+  `--folk` reports what the plans cost.
 - Townsfolk live only near the player: chunks exist around the player and
   nowhere else, so anyone further out than `SIM_RADIUS` is put where the
   hour says instead of walked there, and tries again when the player comes
