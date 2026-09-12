@@ -513,13 +513,13 @@ func _try_rest(c: Vector3i) -> bool:
 	var k: int = f[2]
 	var b := TileLibrary.furniture_back(k)
 	var back := Vector3(b.x, 0, b.y)
-	var centre := Player.cell_center(anchor)
+	var centre := Figure.cell_center(anchor)
 	if spec.has("sit"):
 		var s: Vector2 = spec["sit"]
-		player.rest(Player.Rest.SIT, centre - back * s.x + Vector3(0, s.y, 0), -back)
+		player.rest(Figure.Rest.SIT, centre - back * s.x + Vector3(0, s.y, 0), -back)
 	elif spec.has("lie"):
 		# Facing the foot of the bed, to lie back toward the pillow.
-		player.rest(Player.Rest.LIE, centre + Basis(Vector3.UP, k * PI / 2.0) * (spec["lie"] as Vector3), -back)
+		player.rest(Figure.Rest.LIE, centre + Basis(Vector3.UP, k * PI / 2.0) * (spec["lie"] as Vector3), -back)
 	else:
 		return false
 	marker.visible = false
@@ -1069,7 +1069,7 @@ func _run_selftest(shot: String) -> void:
 			var b := rig.camera.global_transform.basis
 			var away := Vector3(-b.z.x, 0, -b.z.z).normalized()
 			var want := player.cell + Vector3i(roundi(away.x), 0, roundi(away.z))
-			_click_pos = rig.camera.unproject_position(Player.cell_center(want) + Vector3(0, 0.05, 0))
+			_click_pos = rig.camera.unproject_position(Figure.cell_center(want) + Vector3(0, 0.05, 0))
 			_click_pending = true
 			await get_tree().physics_frame
 			await get_tree().process_frame
