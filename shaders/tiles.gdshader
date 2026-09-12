@@ -26,6 +26,10 @@ uniform float cutout_exempt = 0.0;   // 1 for furniture and trees, which occlude
 // points from the wall into the room: they go by the wall cell behind them.
 // 3 for cave rock, whose COLOR holds a bit per camera yaw: set when the
 // cube hides a passage from a camera toward (-x,-z), (+x,-z), (-x,+z), (+x,+z).
+// 4 for one cube of a wall piece: it goes with its wall, by the same facing
+// test, but it fills its cell so the cut takes it whole. A three-cube panel
+// in a single cell has to be cut through the middle of itself instead, and
+// stands hollow along the cut.
 uniform float knockdown = 0.0;
 uniform float terrain_blend = 0.0;   // 1 for natural ground tiles: blend materials across cells
 
@@ -195,7 +199,13 @@ void fragment() {
 	// around the character stay put; wall pieces are cut at waist height,
 	// cubes (cave rock included) by cell.
 	bool wall_piece = knockdown > 0.5 && knockdown < 2.5;
-	float above = (wall_piece ? world_pos.y >= cutout_floor : cell_y > cutout_floor) ? 1.0 : 0.0;
+	bool wall_block = knockdown > 3.5;
+	// A block goes whole, and goes as soon as its cell reaches the cut, so
+	// what is left stands a cube high: waist height on a two-cube figure,
+	// the same as the plane cuts a panel to.
+	float above = wall_piece ? (world_pos.y >= cutout_floor ? 1.0 : 0.0)
+		: (wall_block ? (cell_y >= cutout_floor ? 1.0 : 0.0)
+		: (cell_y > cutout_floor ? 1.0 : 0.0));
 	float dxz = length(rel.xz);
 	// The cell this fragment belongs to, nudged inward off its face so the
 	// outer faces of edge cubes count with their cube.
@@ -216,9 +226,10 @@ void fragment() {
 	// lies on the camera's side of theirs along the axis the wall faces, or
 	// in their own row (the wall they stand in the doorway of). A post
 	// where walls meet belongs to both, and stays while either stands.
-	if (wall_piece && cutout_enabled > 0.0) {
+	if ((wall_piece || wall_block) && cutout_enabled > 0.0) {
 		vec3 facing = (INV_VIEW_MATRIX * vec4(TANGENT, 0.0)).xyz;
-		vec2 wallcell = knockdown > 1.5 ? cellxz - round(facing.xz) : cellxz;
+		// Only a hung piece goes by the wall cell behind it.
+		vec2 wallcell = (knockdown > 1.5 && knockdown < 2.5) ? cellxz - round(facing.xz) : cellxz;
 		vec2 relcell = wallcell - floor(player_pos.xz);
 		vec2 camside = -cam_forward.xz;
 		bool on_x = relcell.x * camside.x >= 0.0;
@@ -240,7 +251,7 @@ void fragment() {
 
 	// Cave walls. A rock cube that hides a passage from this yaw goes;
 	// underground every such wall, nearer the surface those within reach.
-	if (knockdown > 2.5 && cutout_enabled > 0.0) {
+	if (knockdown > 2.5 && knockdown < 3.5 && cutout_enabled > 0.0) {
 		vec2 camside = -cam_forward.xz;
 		int yaw = (camside.x > 0.0 ? 1 : 0) + (camside.y > 0.0 ? 2 : 0);
 		float bit = yaw == 0 ? COLOR.r : (yaw == 1 ? COLOR.g : (yaw == 2 ? COLOR.b : COLOR.a));

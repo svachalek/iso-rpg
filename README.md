@@ -198,6 +198,9 @@ same scale; there is no zoom-in view.
   two cells of a roomy room there; a fireplace only goes where that is
   possible) and a stack standing out of the roof; the character spawns at
   the south gate
+- The town wall's blocks are built in code in the pack's style, not loaded
+  from it: a cube-sized tile needs no scaling to sit on the grid, where the
+  pack's own wall is four units square and lands on 2.67 cells
 - Furniture from the CC0 KayKit Dungeon Asset Pack 1.1 (assets/kaykit_dungeon,
   loaded at runtime and scaled so a bed spans one by two cells), chosen by the
   letter each room carries on its layout map: shops get a counter of laden
@@ -241,13 +244,22 @@ same scale; there is no zoom-in view.
     face the camera are cut to waist height, one cube over the feet, so the
     room opens up while its far walls and everything in it stay as they are.
     Cut heights are whole cubes, so cubes, floors and furniture are cut by
-    cell rather than by fragment, which keeps the cut edges clean. The wall the character stands in the doorway of counts
-    as facing the camera. A wall piece's facing is baked into its vertex
-    tangents, since a GridMap gives the shader no per-instance transform
+    cell rather than by fragment, which keeps the cut edges clean. Wall
+    pieces are three cubes tall where they used to stand in one cell, so
+    they are built again as one-cube blocks and stacked: a block fills its
+    cell, the cut takes it whole, and what is left is the solid top of the
+    block below. A block goes as soon as its own cell reaches the cut, so
+    a knocked-down wall stands one cube, waist height on a two-cube figure.
+    Wall-hung pieces are still cut by fragment, being small enough that a
+    cut through one rarely shows. The wall the character stands in the
+    doorway of counts as facing the camera. A wall piece's facing is
+    baked into its vertex tangents, since a GridMap gives the shader no
+    per-instance transform
   - occluders: a building standing between the camera and the character
     (found each frame by casting a ray from the character's body toward
     the camera from nine points across the character's body against every
-    building's box; the nearest three count) is cut
+    building's box and every length of the town wall; the nearest three
+    count) is cut
     down to a waist-high ground floor: its roof, upper storeys and wall
     tops go, its furniture stays, so its doorways show. This works whether
     the character is outdoors behind it or indoors with it in the way

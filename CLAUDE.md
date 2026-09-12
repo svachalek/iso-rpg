@@ -70,7 +70,7 @@ cannot use `call()`.
 
 - Hand-built props, walls and stairs follow the KayKit style: see
   `.claude/skills/style-pieces/SKILL.md` before adding one.
-- `assets/kaykit_dungeon`, `assets/kaykit_nature`,
+- `assets/kaykit_dungeon`, `assets/kaykit_dungeon_pack`, `assets/kaykit_nature`,
   `assets/kaykit_adventurers` (the characters) and `assets/kaykit_animations`
   (the Character Animations pack's Rig_Medium clips, on a mannequin with the
   characters' bones: `Figure._read_pack` reads the files in `PACK_FILES`
@@ -82,14 +82,13 @@ cannot use `call()`.
   from `Assets/gltf/ColorN` and name it in `Nature` or `PROP_SPECS`.
   Colours 1 to 3 are greens, 4 teal, 5 and 6 autumn, 7 red, 8 pink.
   `assets/kaykit_dungeon` is the same arrangement for the furniture, out of
-  `assets/KayKit_Dungeon_Pack_1.1_EXTRA`; name the model in
-  `FURNITURE_SPECS` and it loads as `.gltf`. It was the 2023 Dungeon
+  `assets/KayKit_Dungeon_Pack_1.1_EXTRA`; name the model
+  in `FURNITURE_SPECS` and it loads as `.gltf`. It was the 2023 Dungeon
   Remastered pack until 2026-09-12, swapped for 1.1 (licence 2026-07,
   models 2024-05) which is the more recent release and holds every model
-  that was in use at identical size. The two gradient atlases differ only
-  in the second half of row 3, which nothing in use samples, so both draw
-  on the one material; a piece taken from there would need its own, as the
-  nature pack has.
+  that was in use at identical size. The pack's own wall models are not
+  used: they are 4 units square, which is 2.67 cells at `FURNITURE_SCALE`,
+  and the town wall is built in code as one-cube blocks instead.
 - The day runs in five minutes (`--daylen=`), and `main.time_of_day` is a
   fraction of one. One directional light is the sun by day and the moon by
   night: the shader knows a shadow pass only by the single `sun_forward`
@@ -131,6 +130,10 @@ cannot use `call()`.
   stay below `PROP_BASE`; adding corner range to the patch library (about
   1500 shapes now) can overflow it. Nature pieces take five ids each (one
   per sink depth) per colour from `NATURE_BASE` up to `FURNITURE_BASE`.
+  Furniture has the whole thousand from `FURNITURE_BASE` to `ROCK_BASE`:
+  whole pieces at the bottom, the wall blocks from `WALL_ROW_BASE`
+  (+500), and `FURNITURE_FILL` at the top of the range, not just above the
+  pieces, so neither run crowds the other.
 - A road's edge is drawn by the shader from `WorldGen.road_map`, not by its
   cells: a gravel top face shows gravel only where that map's bilinear
   samples clear a half, and the ground under it elsewhere. So laying a
@@ -142,6 +145,21 @@ cannot use `call()`.
   isolated road cell comes out a diamond, and a one-cell-wide path tapers to
   a point at its end; roads are two cells wide, which the contour keeps
   exactly.
+- A wall piece stands three cubes tall in what used to be one cell, so a
+  cut had to pass through the middle of it and left it hollow. Pieces
+  marked `"rows": true` are therefore built twice: once whole (which is all
+  the `--furniture` gallery shows) and once per cube, with `_row_clip`
+  clamping every box to that cube's slab. A clamped box closes itself, so
+  the blocks need no cap code — but that only holds because every wall
+  builder emits nothing but `_bevel_box` (through `_wall_beam`,
+  `_wall_plaster`, `_part_beam`, `_part_plaster`) and every transform they
+  pass is a turn about y, which leaves y alone. A builder that reaches for
+  `_tri_prism` or `_poly_prism`, or tilts a box, will not clip and will
+  come out hollow again. Blocks overlap by `ROW_OVERLAP`, or the chamfer on
+  each clipped edge draws a line across the wall at every course. Their ids
+  run from `WALL_ROW_BASE`, and they take `knockdown` 4: knocked down by
+  the same facing test as a wall, but taken by whole cells like a cube, and
+  taken as soon as the cell reaches the cut so a cube is left standing.
 - Height fields snap to quarter cubes; pieces are chosen by best fit, so
   a column that looks wrong is usually a range problem in `surface_piece`.
 - `WorldGen.fill_chunk` runs on a worker thread, writing into a

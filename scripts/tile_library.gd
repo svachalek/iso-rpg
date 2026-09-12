@@ -80,8 +80,16 @@ static var _nature_next := NATURE_BASE
 ## behind the cell (-z before rotation) and may be passable when mounted
 ## high enough to walk under.
 const FURNITURE_BASE := 61000
-const FURNITURE_FILL := FURNITURE_BASE + 99
-const FURNITURE_FILL_PASSABLE := FURNITURE_BASE + 98  # the other cells of a rug
+const FURNITURE_FILL := FURNITURE_BASE + 999
+const FURNITURE_FILL_PASSABLE := FURNITURE_BASE + 998  # the other cells of a rug
+## A wall piece three cubes tall lives in one cell, so the cuts have to take
+## it by fragment, through the middle of its panels, and it stands hollow
+## along the cut. The pieces marked "rows" are built again as one-cube
+## blocks, stacked WALL_ROWS to the cell they used to fill; a block fills
+## its cell, so the cuts take it whole and leave a solid top. Their ids run
+## from here, kind by kind, clear of the whole pieces below.
+const WALL_ROW_BASE := FURNITURE_BASE + 500
+const WALL_ROWS := 3
 enum Furniture { BED, BED_FANCY, BED_MAT, CHAIR, STOOL, TABLE, TABLE_FOOD, TABLE_DRINK, TABLE_BIG, TABLE_BIG_SET,
 	SHELVES, SHELF, BARREL, BOX, CRATES, KEG, CHEST, TORCH, FIREPLACE, COUNTER,
 	WALL_G, WALL_G_WINDOW, WALL_G_DOOR, WALL_U, WALL_U_WINDOW, POST_G, POST_U, BAND, BAND_POST,
@@ -126,15 +134,15 @@ const FURNITURE_SPECS := {
 	# inner edge of their cell (the interior is toward -z before rotation).
 	# Ground panels stand on a stone plinth; posts fill corner cells; bands
 	# edge an upper floor's row. The doorway is walked through.
-	Furniture.WALL_G: {"build": "wall", "size": Vector2i(1, 1)},
-	Furniture.WALL_G_WINDOW: {"build": "wall", "size": Vector2i(1, 1)},
-	Furniture.WALL_G_DOOR: {"build": "wall", "size": Vector2i(1, 1), "passable": true},
-	Furniture.WALL_U: {"build": "wall", "size": Vector2i(1, 1)},
-	Furniture.WALL_U_WINDOW: {"build": "wall", "size": Vector2i(1, 1)},
-	Furniture.POST_G: {"build": "post", "size": Vector2i(1, 1)},
-	Furniture.POST_U: {"build": "post", "size": Vector2i(1, 1)},
-	Furniture.BAND: {"build": "band", "size": Vector2i(1, 1)},
-	Furniture.BAND_POST: {"build": "band", "size": Vector2i(1, 1)},
+	Furniture.WALL_G: {"build": "wall", "size": Vector2i(1, 1), "rows": true},
+	Furniture.WALL_G_WINDOW: {"build": "wall", "size": Vector2i(1, 1), "rows": true},
+	Furniture.WALL_G_DOOR: {"build": "wall", "size": Vector2i(1, 1), "passable": true, "rows": true},
+	Furniture.WALL_U: {"build": "wall", "size": Vector2i(1, 1), "rows": true},
+	Furniture.WALL_U_WINDOW: {"build": "wall", "size": Vector2i(1, 1), "rows": true},
+	Furniture.POST_G: {"build": "post", "size": Vector2i(1, 1), "rows": true},
+	Furniture.POST_U: {"build": "post", "size": Vector2i(1, 1), "rows": true},
+	Furniture.BAND: {"build": "band", "size": Vector2i(1, 1), "rows": true},
+	Furniture.BAND_POST: {"build": "band", "size": Vector2i(1, 1), "rows": true},
 	# Under a stair: a pair of posts, the top pair carrying the ledger the
 	# stringers rest on.
 	Furniture.STAIR_POST: {"build": "posts", "size": Vector2i(1, 1)},
@@ -144,18 +152,18 @@ const FURNITURE_SPECS := {
 	# builder picks the piece from the neighbours). At rotation 0 the arms
 	# run +x (END), +x and -x (STRAIGHT, DOOR), +x and +z (CORNER), all but
 	# -z (T). The doorway is a framed opening, walked through.
-	Furniture.PART_POST: {"build": "partition", "size": Vector2i(1, 1)},
-	Furniture.PART_END: {"build": "partition", "size": Vector2i(1, 1)},
-	Furniture.PART_STRAIGHT: {"build": "partition", "size": Vector2i(1, 1)},
-	Furniture.PART_CORNER: {"build": "partition", "size": Vector2i(1, 1)},
-	Furniture.PART_T: {"build": "partition", "size": Vector2i(1, 1)},
-	Furniture.PART_CROSS: {"build": "partition", "size": Vector2i(1, 1)},
-	Furniture.PART_DOOR: {"build": "partition", "size": Vector2i(1, 1), "passable": true},
+	Furniture.PART_POST: {"build": "partition", "size": Vector2i(1, 1), "rows": true},
+	Furniture.PART_END: {"build": "partition", "size": Vector2i(1, 1), "rows": true},
+	Furniture.PART_STRAIGHT: {"build": "partition", "size": Vector2i(1, 1), "rows": true},
+	Furniture.PART_CORNER: {"build": "partition", "size": Vector2i(1, 1), "rows": true},
+	Furniture.PART_T: {"build": "partition", "size": Vector2i(1, 1), "rows": true},
+	Furniture.PART_CROSS: {"build": "partition", "size": Vector2i(1, 1), "rows": true},
+	Furniture.PART_DOOR: {"build": "partition", "size": Vector2i(1, 1), "passable": true, "rows": true},
 	# A fireplace's chimney: the breast carried up through each storey above
 	# it (anchored like the fireplace, spilling into its second cell) and
 	# the stack that stands out of the roof.
-	Furniture.CHIMNEY: {"build": "chimney", "size": Vector2i(1, 1)},
-	Furniture.CHIMNEY_STACK: {"build": "stack", "size": Vector2i(1, 1)},
+	Furniture.CHIMNEY: {"build": "chimney", "size": Vector2i(1, 1), "rows": true},
+	Furniture.CHIMNEY_STACK: {"build": "stack", "size": Vector2i(1, 1), "rows": true},
 	# Handrails in the cell over a stair's middle steps, along whichever
 	# edges have floor beyond them (arms as for partitions: +x; +x and -x;
 	# +x and +z; all but -z). Walked through by the head of whoever climbs.
@@ -183,16 +191,22 @@ const FURNITURE_SPECS := {
 	Furniture.WALL_PILLAR: {"build": "wall_block", "size": Vector2i(1, 1)},
 	Furniture.WALL_PILLAR_CAP: {"build": "wall_block", "size": Vector2i(1, 1)},
 }
-## Rows of blocks the town wall stands: two courses and the coping.
-const WALL_ROWS := 3
 static var _furniture_mat: ShaderMaterial = null
 static var _wall_mat: ShaderMaterial = null   # wall pieces: knocked down to waist height in front of the character
+static var _wall_block_mat: ShaderMaterial = null   # one cube of a wall piece: knocked down by whole cells
 static var _hung_mat: ShaderMaterial = null   # wall-hung pieces: as the wall behind their cell
 static var _structure_mat: ShaderMaterial = null   # stairs: cut with an occluding building, never knocked down
 static var _glow_mat: ShaderMaterial = null
 ## While a wall piece is built: the way its panels face in mesh space,
 ## baked into every vertex's tangent for the knock-down (UP for a post).
 static var _knock_facing := Vector3.ZERO
+## While one cube of a wall piece is built: the slab of it to keep. Boxes
+## are clipped to this rather than sawn, so each block closes itself and the
+## knock-down is left looking at a solid top instead of into the shell.
+## Blocks overlap a shade, or the chamfer on each clipped edge would draw a
+## line across the wall at every course.
+const ROW_OVERLAP := 0.02
+static var _row_clip := Vector2(-1e9, 1e9)
 
 ## Shapes other than the cube exist for a subset of tiles. An item id packs
 ## shape and tile (see item_id), so both are recoverable from any id.
@@ -355,6 +369,11 @@ static func furniture_id(kind: int) -> int:
 	return FURNITURE_BASE + kind
 
 
+## The item for one cube of a wall piece, `row` up from its foot.
+static func wall_row_id(kind: int, row: int) -> int:
+	return WALL_ROW_BASE + kind * WALL_ROWS + row
+
+
 static func is_furniture(id: int) -> bool:
 	return id >= FURNITURE_BASE and id < ROCK_BASE
 
@@ -366,7 +385,10 @@ static func is_passable(id: int) -> bool:
 	if id == FURNITURE_FILL_PASSABLE:
 		return true
 	if is_furniture(id) and id != FURNITURE_FILL:
-		var spec: Dictionary = FURNITURE_SPECS.get(id - FURNITURE_BASE, {})
+		var kind := id - FURNITURE_BASE
+		if id >= WALL_ROW_BASE:
+			kind = (id - WALL_ROW_BASE) / WALL_ROWS
+		var spec: Dictionary = FURNITURE_SPECS.get(kind, {})
 		return spec.get("passable", false)
 	return false
 
@@ -746,6 +768,36 @@ static func _canopy_cells(model: ArrayMesh, kind: int, scale: float) -> Array[Ve
 ## footprint is centred on the anchor cell(s) with its base on the floor.
 ## The materials shared by every furniture piece, made once the pack's
 ## atlas is known (from the first model loaded).
+## Re-emits a pack model through `xf` with `facing` in every vertex's
+## tangent, which is how the knock-down reads the way a piece faces. The
+## pack's own meshes carry no tangents, so they cannot simply be appended.
+static func _emit_with_tangent(st: SurfaceTool, model: ArrayMesh, xf: Transform3D, facing: Vector3) -> void:
+	var arr := model.surface_get_arrays(0)
+	var verts: PackedVector3Array = arr[Mesh.ARRAY_VERTEX]
+	var norms: PackedVector3Array = arr[Mesh.ARRAY_NORMAL]
+	var uvs: PackedVector2Array = arr[Mesh.ARRAY_TEX_UV]
+	var idx: PackedInt32Array = arr[Mesh.ARRAY_INDEX]
+	st.set_tangent(Plane(facing, 1.0))
+	for i in idx:
+		st.set_normal(norms[i])
+		st.set_uv(uvs[i])
+		st.add_vertex(xf * verts[i])
+
+
+## One cube of a wall piece, brought down from where it stood in the whole
+## piece to sit in its own cell. The mesh is re-emitted rather than rebuilt,
+## so the shading gradient it was given across the whole piece carries over
+## and the courses still read as one wall.
+static func _wall_row_mesh(mesh: ArrayMesh, row: int) -> ArrayMesh:
+	if mesh.get_surface_count() == 0:
+		return mesh   # nothing of this piece reaches this cube
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	st.append_from(mesh, 0, Transform3D(Basis.IDENTITY, Vector3(0, -row, 0)))
+	st.set_material(_wall_block_mat)
+	return st.commit()
+
+
 static func _make_furniture_mats(tex: Texture2D) -> void:
 	_furniture_mat = _make_material(tex, "")
 	_furniture_mat.set_shader_parameter("cutout_exempt", 1.0)
@@ -753,6 +805,11 @@ static func _make_furniture_mats(tex: Texture2D) -> void:
 	_wall_mat.set_shader_parameter("knockdown", 1.0)
 	_hung_mat = _furniture_mat.duplicate()
 	_hung_mat.set_shader_parameter("knockdown", 2.0)
+	# One cube of a wall: it goes with the wall it belongs to, by the same
+	# facing test, but a block fills its cell so the cut takes it whole
+	# rather than through the middle of it.
+	_wall_block_mat = _furniture_mat.duplicate()
+	_wall_block_mat.set_shader_parameter("knockdown", 4.0)
 	_structure_mat = _furniture_mat.duplicate()
 	_structure_mat.set_shader_parameter("cutout_exempt", 0.0)
 	_glow_mat = _make_material(tex, "GLOW")
@@ -787,18 +844,9 @@ static func _add_furniture(lib: MeshLibrary, atlas: Texture2D) -> void:
 		st.begin(Mesh.PRIMITIVE_TRIANGLES)
 		if spec.get("wall", false):
 			# Hung on a wall (shelves, torches): part of it, knocked down and
-			# cut with it. The pack's meshes carry no tangents, so re-emit
-			# the vertices with the wall's facing (the item's back is -z).
-			var arr := model.surface_get_arrays(0)
-			var verts: PackedVector3Array = arr[Mesh.ARRAY_VERTEX]
-			var norms: PackedVector3Array = arr[Mesh.ARRAY_NORMAL]
-			var uvs: PackedVector2Array = arr[Mesh.ARRAY_TEX_UV]
-			var idx: PackedInt32Array = arr[Mesh.ARRAY_INDEX]
-			st.set_tangent(Plane(Vector3(0, 0, 1), 1.0))
-			for i in idx:
-				st.set_normal(norms[i])
-				st.set_uv(uvs[i])
-				st.add_vertex(xf * verts[i])
+			# cut with it. It goes by the wall cell behind it, which the
+			# tangent points at (the item's back is -z).
+			_emit_with_tangent(st, model, xf, Vector3(0, 0, 1))
 			st.set_material(_hung_mat)
 		else:
 			st.append_from(model, 0, xf)
@@ -811,48 +859,59 @@ static func _add_furniture(lib: MeshLibrary, atlas: Texture2D) -> void:
 	if _furniture_mat == null:
 		_make_furniture_mats(atlas)
 	for kind in built:
-		var id := furniture_id(kind)
-		var mesh: ArrayMesh
-		match kind:
-			Furniture.FIREPLACE: mesh = _build_fireplace()
-			Furniture.COUNTER: mesh = _build_counter()
-			Furniture.WALL_G: mesh = _build_wall(true, false, false)
-			Furniture.WALL_G_WINDOW: mesh = _build_wall(true, true, false)
-			Furniture.WALL_G_DOOR: mesh = _build_wall(true, false, true)
-			Furniture.WALL_U: mesh = _build_wall(false, false, false)
-			Furniture.WALL_U_WINDOW: mesh = _build_wall(false, true, false)
-			Furniture.POST_G: mesh = _build_post(true)
-			Furniture.POST_U: mesh = _build_post(false)
-			Furniture.BAND: mesh = _build_band(false)
-			Furniture.BAND_POST: mesh = _build_band(true)
-			Furniture.STAIR_POST: mesh = _build_stair_posts(false)
-			Furniture.STAIR_POST_TOP: mesh = _build_stair_posts(true)
-			Furniture.PART_POST: mesh = _build_partition(0, false)
-			Furniture.PART_END: mesh = _build_partition(1, false)
-			Furniture.PART_STRAIGHT: mesh = _build_partition(1 | 4, false)
-			Furniture.PART_CORNER: mesh = _build_partition(1 | 2, false)
-			Furniture.PART_T: mesh = _build_partition(1 | 2 | 4, false)
-			Furniture.PART_CROSS: mesh = _build_partition(15, false)
-			Furniture.PART_DOOR: mesh = _build_partition(1 | 4, true)
-			Furniture.CHIMNEY: mesh = _build_chimney()
-			Furniture.CHIMNEY_STACK: mesh = _build_chimney_stack()
-			Furniture.RAIL_SIDE: mesh = _build_rail(1)
-			Furniture.RAIL_PAIR: mesh = _build_rail(1 | 4)
-			Furniture.RAIL_CORNER: mesh = _build_rail(1 | 2)
-			Furniture.RAIL_U: mesh = _build_rail(1 | 2 | 4)
-			Furniture.RUG_SMALL: mesh = _build_rug(2, 1)
-			Furniture.RUG_BIG: mesh = _build_rug(2, 2)
-			Furniture.WALL_BLOCK: mesh = _build_wall_block(Block.COURSE)
-			Furniture.WALL_BLOCK_ALT: mesh = _build_wall_block(Block.COURSE_ALT)
-			Furniture.WALL_BLOCK_BROKEN: mesh = _build_wall_block(Block.BROKEN)
-			Furniture.WALL_BLOCK_MOSS: mesh = _build_wall_block(Block.MOSS)
-			Furniture.WALL_CAP: mesh = _build_wall_block(Block.CAP)
-			Furniture.WALL_PILLAR: mesh = _build_wall_block(Block.PILLAR)
-			Furniture.WALL_PILLAR_CAP: mesh = _build_wall_block(Block.PILLAR_CAP)
-		lib.create_item(id)
-		lib.set_item_name(id, "FURNITURE_" + Furniture.keys()[kind])
-		lib.set_item_mesh(id, mesh)
-		lib.set_item_shapes(id, [])
+		# A piece marked "rows" is built once whole (which is what the
+		# furniture gallery shows) and then once per cube, with the clip
+		# window keeping only that cube's slab of every box.
+		var rows: bool = FURNITURE_SPECS[kind].get("rows", false)
+		for step in (WALL_ROWS + 1 if rows else 1):
+			var row := step - 1 if rows else -1   # -1 builds the whole piece
+			_row_clip = Vector2(-1e9, 1e9) if row < 0 \
+				else Vector2(row - 0.5 - ROW_OVERLAP, row + 0.5 + ROW_OVERLAP)
+			var id := furniture_id(kind) if row < 0 else wall_row_id(kind, row)
+			var mesh: ArrayMesh
+			match kind:
+				Furniture.FIREPLACE: mesh = _build_fireplace()
+				Furniture.COUNTER: mesh = _build_counter()
+				Furniture.WALL_G: mesh = _build_wall(true, false, false)
+				Furniture.WALL_G_WINDOW: mesh = _build_wall(true, true, false)
+				Furniture.WALL_G_DOOR: mesh = _build_wall(true, false, true)
+				Furniture.WALL_U: mesh = _build_wall(false, false, false)
+				Furniture.WALL_U_WINDOW: mesh = _build_wall(false, true, false)
+				Furniture.POST_G: mesh = _build_post(true)
+				Furniture.POST_U: mesh = _build_post(false)
+				Furniture.BAND: mesh = _build_band(false)
+				Furniture.BAND_POST: mesh = _build_band(true)
+				Furniture.STAIR_POST: mesh = _build_stair_posts(false)
+				Furniture.STAIR_POST_TOP: mesh = _build_stair_posts(true)
+				Furniture.PART_POST: mesh = _build_partition(0, false)
+				Furniture.PART_END: mesh = _build_partition(1, false)
+				Furniture.PART_STRAIGHT: mesh = _build_partition(1 | 4, false)
+				Furniture.PART_CORNER: mesh = _build_partition(1 | 2, false)
+				Furniture.PART_T: mesh = _build_partition(1 | 2 | 4, false)
+				Furniture.PART_CROSS: mesh = _build_partition(15, false)
+				Furniture.PART_DOOR: mesh = _build_partition(1 | 4, true)
+				Furniture.CHIMNEY: mesh = _build_chimney()
+				Furniture.CHIMNEY_STACK: mesh = _build_chimney_stack()
+				Furniture.RAIL_SIDE: mesh = _build_rail(1)
+				Furniture.RAIL_PAIR: mesh = _build_rail(1 | 4)
+				Furniture.RAIL_CORNER: mesh = _build_rail(1 | 2)
+				Furniture.RAIL_U: mesh = _build_rail(1 | 2 | 4)
+				Furniture.RUG_SMALL: mesh = _build_rug(2, 1)
+				Furniture.RUG_BIG: mesh = _build_rug(2, 2)
+				Furniture.WALL_BLOCK: mesh = _build_wall_block(Block.COURSE)
+				Furniture.WALL_BLOCK_ALT: mesh = _build_wall_block(Block.COURSE_ALT)
+				Furniture.WALL_BLOCK_BROKEN: mesh = _build_wall_block(Block.BROKEN)
+				Furniture.WALL_BLOCK_MOSS: mesh = _build_wall_block(Block.MOSS)
+				Furniture.WALL_CAP: mesh = _build_wall_block(Block.CAP)
+				Furniture.WALL_PILLAR: mesh = _build_wall_block(Block.PILLAR)
+				Furniture.WALL_PILLAR_CAP: mesh = _build_wall_block(Block.PILLAR_CAP)
+			_row_clip = Vector2(-1e9, 1e9)
+			if row >= 0:
+				mesh = _wall_row_mesh(mesh, row)
+			lib.create_item(id)
+			lib.set_item_name(id, "FURNITURE_" + Furniture.keys()[kind] + ("" if row < 0 else "_R%d" % row))
+			lib.set_item_mesh(id, mesh)
+			lib.set_item_shapes(id, [])
 	lib.create_item(FURNITURE_FILL)
 	lib.set_item_name(FURNITURE_FILL, "FURNITURE_FILL")
 	lib.set_item_mesh(FURNITURE_FILL, ArrayMesh.new())
@@ -883,6 +942,14 @@ static func _swatch_uv(col: int, row: int, t: float) -> Vector2:
 static func _bevel_box(st: SurfaceTool, a: Vector3, b: Vector3, col: int, row: int, bevel: float, y_range: Vector2, t_range := Vector2(0.38, 0.72), xf := Transform3D.IDENTITY) -> void:
 	var lo := Vector3(minf(a.x, b.x), minf(a.y, b.y), minf(a.z, b.z))
 	var hi := Vector3(maxf(a.x, b.x), maxf(a.y, b.y), maxf(a.z, b.z))
+	# While a piece is being built a cube at a time, boxes are clipped to
+	# the cube and those outside it dropped. Every xf a wall piece passes is
+	# a turn about y, so clipping the box before it is placed clips it in
+	# the same plane the block is cut on.
+	lo.y = maxf(lo.y, _row_clip.x)
+	hi.y = minf(hi.y, _row_clip.y)
+	if hi.y - lo.y < 0.002:
+		return
 	var c := (lo + hi) * 0.5
 	var h := (hi - lo) * 0.5
 	var bv := minf(bevel, minf(h.x, minf(h.y, h.z)) * 0.9)
@@ -1557,7 +1624,11 @@ static func _make_material(atlas: Texture2D, variant: String) -> ShaderMaterial:
 		code = code.replace("shader_type spatial;", "shader_type spatial;\n#define " + variant)
 	if variant == "CUTOUT" or variant == "NATURE":
 		# Two-sided: plants are single quads, and a tree cut by the slice
-		# shows the far wall of its trunk instead of a hollow.
+		# shows the far wall of its trunk instead of a hollow. Wall pieces
+		# were tried this way too, for the hollow the knock-down opens in
+		# them, and flickered: a tree is one closed trunk, where a wall is
+		# an assembly of butting boxes whose shared faces then both draw,
+		# and both its faces land in the dithered cut and the shadow pass.
 		code = code.replace("render_mode cull_back,", "render_mode cull_disabled,")
 	var shader := Shader.new()
 	shader.code = code

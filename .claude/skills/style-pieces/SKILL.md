@@ -98,3 +98,13 @@ Shades the pack uses, and that look right next to it:
   scene; always run with `--quit-after`.
 - Item ids are 16-bit: shapes pack as `shape * 32 + tile` below
   `PROP_BASE` (60000); furniture ids start at `FURNITURE_BASE` (61000).
+- A piece taller than its cell gets cut through the middle of its boxes and
+  shows hollow along the cut. Drawing it two-sided is not the answer,
+  though it is for a tree: a wall is an assembly of butting boxes whose
+  shared faces then z-fight, and both of its faces land in the dithered cut
+  and in the shadow pass, which flickers. Build it a cube at a time
+  instead. Mark the spec `"rows": true` and it is built once per cube with
+  `_row_clip` keeping only that cube's slab of each box, which closes
+  itself; emit nothing but `_bevel_box`, and pass only turns about y, or
+  the clip will miss it. A piece authored as blocks from the start (the
+  town wall, `_build_wall_block`) needs none of that.

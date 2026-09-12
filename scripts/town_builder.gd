@@ -609,9 +609,9 @@ func _house(e: WorldEdits, lay: Layout) -> void:
 				var c := Vector2i(x, z)
 				if on_x and on_z:
 					var k := _quadrant(Vector2i(1 if x == x0 else -1, 1 if z == z0 else -1))
-					e.set_cell(_w(x, wy, z), TileLibrary.furniture_id(F.POST_G if ground else F.POST_U), TileLibrary.rotation_index(k))
+					_wall_rows(e, Vector2i(x, z), wy, F.POST_G if ground else F.POST_U, k)
 					if s < lay.storeys - 1:
-						e.set_cell(_w(x, wy + WALL_H, z), TileLibrary.furniture_id(F.BAND_POST), TileLibrary.rotation_index(k))
+						_wall_rows(e, Vector2i(x, z), wy + WALL_H, F.BAND_POST, k)
 					continue
 				var inward := Vector2i(1 if x == x0 else -1, 0) if on_x else Vector2i(0, 1 if z == z0 else -1)
 				var along := (z - z0) if on_x else (x - x0)
@@ -622,9 +622,9 @@ func _house(e: WorldEdits, lay: Layout) -> void:
 				elif along % 3 == 2 and c != door and behind != "#" and behind != "d":
 					kind = F.WALL_G_WINDOW if ground else F.WALL_U_WINDOW
 				var k := _facing(inward)
-				e.set_cell(_w(x, wy, z), TileLibrary.furniture_id(kind), TileLibrary.rotation_index(k))
+				_wall_rows(e, Vector2i(x, z), wy, kind, k)
 				if s < lay.storeys - 1:
-					e.set_cell(_w(x, wy + WALL_H, z), TileLibrary.furniture_id(F.BAND), TileLibrary.rotation_index(k))
+					_wall_rows(e, Vector2i(x, z), wy + WALL_H, F.BAND, k)
 		_partitions(e, lay, s, wy)
 
 	# A gravel path from the door to the street (no step: the floor is at
@@ -698,7 +698,7 @@ func _partitions(e: WorldEdits, lay: Layout, s: int, wy: int) -> void:
 			if n == "#" or n == "d" or n == "D":
 				arms.append(d)
 		var piece := _partition_piece(arms, ch == "d")
-		e.set_cell(_w(c.x, wy, c.y), TileLibrary.furniture_id(piece.x), TileLibrary.rotation_index(piece.y))
+		_wall_rows(e, c, wy, piece.x, piece.y)
 
 
 ## A straight stair from the floor whose ground row is `base` (feet at
@@ -985,12 +985,12 @@ func _chimney(e: WorldEdits, lay: Layout, plans: Array[Plan], s: int, f: Vector3
 			plans[t].walk.erase(p)
 			plans[t].free.erase(p)
 			if i == 0:
-				e.set_cell(_w(p.x, wy, p.y), TileLibrary.furniture_id(TileLibrary.Furniture.CHIMNEY), TileLibrary.rotation_index(k))
+				_wall_rows(e, p, wy, TileLibrary.Furniture.CHIMNEY, k)
 			else:
 				e.set_cell(_w(p.x, wy, p.y), TileLibrary.FURNITURE_FILL)
 	var eave_y := height + lay.storeys * STOREY
 	var top := _roof_top(lay.rect, eave_y, c.x, c.y)
-	e.set_cell(_w(c.x, top + 1, c.y), TileLibrary.furniture_id(TileLibrary.Furniture.CHIMNEY_STACK), TileLibrary.rotation_index(k))
+	_wall_rows(e, c, top + 1, TileLibrary.Furniture.CHIMNEY_STACK, k)
 
 
 ## Handrails in the holes over the stair arriving at storey `s`, along
@@ -1455,6 +1455,15 @@ func _wall_column(e: WorldEdits, c: Vector2i, y: int, pillar: bool, i: int, k: i
 		else:
 			kind = F.WALL_BLOCK_ALT if (i + row) % 2 == 1 else F.WALL_BLOCK
 		e.set_cell(_w(c.x, y + row, c.y), TileLibrary.furniture_id(kind), TileLibrary.rotation_index(k))
+
+
+## A wall piece as the stack of one-cube blocks it is built from, standing
+## in the cells it used to fill on its own. The cuts take a block whole, so
+## a knocked-down wall is left with a solid top; the piece as one tall mesh
+## in a single cell had to be cut through the middle of its panels.
+func _wall_rows(e: WorldEdits, c: Vector2i, y: int, kind: int, k: int) -> void:
+	for row in TileLibrary.WALL_ROWS:
+		e.set_cell(_w(c.x, y + row, c.y), TileLibrary.wall_row_id(kind, row), TileLibrary.rotation_index(k))
 
 
 func _w(x: int, y: int, z: int) -> Vector3i:
