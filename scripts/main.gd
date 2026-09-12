@@ -236,10 +236,12 @@ func _setup_environment() -> void:
 	# shadow edge crawls as the sun turns through the day.
 	sun.directional_shadow_max_distance = 120.0
 	# A visibly sized sun gives soft, distance-dependent shadow edges.
-	# A softer edge also hides what is left of the crawl as the sun turns:
-	# the cascades are fitted to the light, so every turn of it shifts
-	# their texels, and a hard edge shows each shift.
-	sun.light_angular_distance = 2.2
+	# The sun is 0.5 degrees across from here, and a light wider than that
+	# reads as a near one: its penumbra spreads with distance, so a
+	# chimney's shadow fans out the further it falls. Kept near life size,
+	# with the blur left to hide what the sun's turning does to the shadow
+	# cascades.
+	sun.light_angular_distance = 0.8
 	sun.shadow_blur = 2.0
 	add_child(sun)
 	_sun = sun
