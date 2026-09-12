@@ -22,6 +22,14 @@ func _ready() -> void:
 	_add_xray_shell()
 
 
+func _process(delta: float) -> void:
+	super(delta)
+	# The cube the body is in, which in a seat is the chair's and not the
+	# figure's own cell beside it. Seated feet dip a hair below the floor.
+	var p := global_position
+	_xray.set_shader_parameter("cube", Vector3(floorf(p.x), floorf(p.y + 0.1), floorf(p.z)))
+
+
 ## Where the knight shows, it marks the stencil so the x-ray shell leaves
 ## it be: the helmet and shield stand out of the shell, in front of it.
 func _mark_stencil() -> void:
