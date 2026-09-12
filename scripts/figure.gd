@@ -7,6 +7,8 @@ extends Node3D
 ## model, what it carries, and who tells it where to go.
 
 signal arrived
+## The figure has set off on the final step of its path.
+signal last_step
 
 const SPEED := 4.0  # world units per second
 ## Of SPEED: the player's run, and the walk the townsfolk keep and the
@@ -356,6 +358,8 @@ func _process(delta: float) -> void:
 			if _path.is_empty():
 				break
 			_begin_step(_path.pop_front())
+			if _path.is_empty():
+				last_step.emit()
 		var step_len := maxf(_from.distance_to(_to), 0.001)
 		var speed := SPEED * speed_scale
 		var need := (1.0 - _t) * step_len / speed

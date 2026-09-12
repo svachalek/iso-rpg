@@ -8,6 +8,12 @@ var player: Player
 var rig: CameraRig
 var finder: GridPathfinder
 var marker: MeshInstance3D
+var _marker_tween: Tween
+## The target beam's radius, and its foot and top relative to the floor:
+## the foot sinks so a slope still meets it.
+const MARKER_RADIUS := 0.4
+const MARKER_FOOT := -0.4
+const MARKER_TOP := 3.0
 var hud: Label
 
 var _click_pending := false
@@ -140,8 +146,9 @@ func _ready() -> void:
 	player = Player.new()
 	player.name = "Player"
 	add_child(player)
+	# The beam fades as the figure steps into it.
+	player.last_step.connect(_hide_marker)
 	player.arrived.connect(func() -> void:
-		marker.visible = false
 		if _rest_on_arrival != null:
 			var c: Vector3i = _rest_on_arrival
 			_rest_on_arrival = null
@@ -349,16 +356,49 @@ static func _parse_time(s: String) -> float:
 
 func _setup_marker() -> void:
 	marker = MeshInstance3D.new()
-	var box := BoxMesh.new()
-	box.size = Vector3(0.9, 0.06, 0.9)
-	marker.mesh = box
-	var mat := StandardMaterial3D.new()
-	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	mat.albedo_color = Color(1.0, 0.9, 0.2, 0.7)
+	var shaft := CylinderMesh.new()
+	shaft.top_radius = MARKER_RADIUS
+	shaft.bottom_radius = MARKER_RADIUS
+	shaft.height = MARKER_TOP - MARKER_FOOT
+	shaft.cap_top = false
+	shaft.cap_bottom = false
+	shaft.radial_segments = 24
+	shaft.rings = 8
+	marker.mesh = shaft
+	var mat := ShaderMaterial.new()
+	mat.shader = preload("res://shaders/beam.gdshader")
+	mat.set_shader_parameter("span", MARKER_TOP - MARKER_FOOT)
+	mat.set_shader_parameter("strength", 0.0)
 	marker.material_override = mat
+	marker.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	marker.visible = false
 	add_child(marker)
+
+
+## Stands the beam on feet position `at`, fading it in.
+func _show_marker(at: Vector3) -> void:
+	marker.position = at + Vector3(0, (MARKER_TOP + MARKER_FOOT) * 0.5, 0)
+	_fade_marker(1.0, 0.15)
+
+
+## Fades the beam out.
+func _hide_marker() -> void:
+	if marker.visible:
+		_fade_marker(0.0, 0.3)
+
+
+func _fade_marker(to: float, seconds: float) -> void:
+	if _marker_tween != null:
+		_marker_tween.kill()
+	var mat := marker.material_override as ShaderMaterial
+	if to > 0.0:
+		marker.visible = true
+	var from: Variant = mat.get_shader_parameter("strength")
+	_marker_tween = create_tween()
+	_marker_tween.tween_method(func(v: float) -> void:
+		mat.set_shader_parameter("strength", v), from if from != null else 0.0, to, seconds)
+	if to == 0.0:
+		_marker_tween.tween_callback(func() -> void: marker.visible = false)
 
 
 func _setup_hud() -> void:
@@ -527,7 +567,7 @@ func _key_step() -> Variant:
 	var dz := roundi(sin(snapped))
 	var n: Variant = finder.step_target(player.cell, dx, dz)
 	if n != null:
-		marker.visible = false
+		_hide_marker()
 	elif dx == 0 or dz == 0:
 		# Walking into a seat or a bed uses it.
 		_try_rest(player.cell + Vector3i(dx, 0, dz))
@@ -546,7 +586,7 @@ func _try_rest(c: Vector3i) -> bool:
 	if pose.is_empty():
 		return false
 	player.rest(pose[0], pose[1], pose[2])
-	marker.visible = false
+	_hide_marker()
 	return true
 
 
@@ -782,8 +822,7 @@ func _walk_to(x: int, z: int, y: float = NAN) -> void:
 		return
 	_status = "Path: %d steps, planned in %.1f ms" % [path.size(), us / 1000.0]
 	player.set_path(path)
-	marker.position = player.pos_of(target) + Vector3(0, 0.03, 0)
-	marker.visible = true
+	_show_marker(player.pos_of(target))
 
 
 ## `--screenshot=PATH` walks the player a short way, then saves a frame and
