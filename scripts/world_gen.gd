@@ -50,6 +50,12 @@ var edits := WorldEdits.new()
 var material_map := Image.create_empty(MAP_SIZE, MAP_SIZE, false, Image.FORMAT_RGBA8)
 var material_texture := ImageTexture.create_from_image(material_map)
 
+## One texel per column on the same wrapping grid: 1 where a road or a
+## street was laid, 0 elsewhere. Roads are all laid before the first chunk
+## builds, so paint_road_map() fills it once.
+var road_map := Image.create_empty(MAP_SIZE, MAP_SIZE, false, Image.FORMAT_R8)
+var road_texture := ImageTexture.create_from_image(road_map)
+
 var _hills := FastNoiseLite.new()
 var _mountains := FastNoiseLite.new()
 var _detail := FastNoiseLite.new()
@@ -232,6 +238,16 @@ func _material_weights(heights: PackedInt32Array, heights_f: PackedFloat32Array,
 			rem -= stone
 			c += Color(rem, sand, stone, snow)
 	return c / 9.0
+
+
+## Paints every road column laid so far into road_map. A texel's centre
+## falls on its column's centre, so the shader's bilinear samples run the
+## road's edge exactly along the cell boundary on a straight stretch and
+## cut the corner where a step turns.
+func paint_road_map() -> void:
+	for c: Vector2i in edits.roads:
+		road_map.set_pixel(posmod(c.x, MAP_SIZE), posmod(c.y, MAP_SIZE), Color(1, 0, 0))
+	road_texture.update(road_map)
 
 
 func _paint_material_map(heights: PackedInt32Array, heights_f: PackedFloat32Array, levels: PackedInt32Array, w: int, ox: int, oz: int, size: int) -> void:

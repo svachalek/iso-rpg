@@ -122,6 +122,17 @@ cannot use `call()`.
   stay below `PROP_BASE`; adding corner range to the patch library (about
   1500 shapes now) can overflow it. Nature pieces take five ids each (one
   per sink depth) per colour from `NATURE_BASE` up to `FURNITURE_BASE`.
+- A road's edge is drawn by the shader from `WorldGen.road_map`, not by its
+  cells: a gravel top face shows gravel only where that map's bilinear
+  samples clear a half, and the ground under it elsewhere. So laying a
+  `GRAVEL` surface without also calling `edits.set_road` on the column
+  leaves it looking like bare ground, and marking a road without laying the
+  surface paints gravel over whatever is there. The map is painted once
+  (`paint_road_map`) after the town and the roads and before the first
+  chunk, so anything that lays road later would have to repaint it. A single
+  isolated road cell comes out a diamond, and a one-cell-wide path tapers to
+  a point at its end; roads are two cells wide, which the contour keeps
+  exactly.
 - Height fields snap to quarter cubes; pieces are chosen by best fit, so
   a column that looks wrong is usually a range problem in `surface_piece`.
 - `WorldGen.fill_chunk` runs on a worker thread, writing into a

@@ -131,9 +131,11 @@ func _ready() -> void:
 		var dir: Vector2i = start[1]
 		var side := Vector2i(dir.y, dir.x) * (hash(start[0]) % 61 - 30)
 		road_cells += RoadBuilder.build(gen, start[0], start[0] + dir * 150 + side)
+	gen.paint_road_map()
 	var t1 := Time.get_ticks_msec()
 
 	RenderingServer.global_shader_parameter_set("material_map", gen.material_texture)
+	RenderingServer.global_shader_parameter_set("road_map", gen.road_texture)
 	_set_blend(_blend_on)
 	chunks = ChunkManager.new()
 	chunks.name = "Chunks"

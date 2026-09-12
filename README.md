@@ -118,12 +118,24 @@ same scale; there is no zoom-in view.
   the water sheet and the material map all use the local level, and the
   character may wade only ankle deep
 - Roads (scripts/road_builder.gd): from every town gate a coarse A* over the
-  height field, preferring gentle slopes and avoiding water, rasterised two
-  cells wide as a gravel surface override that keeps the terrain's ramps.
-  At water the road stops on the bank, a plank deck crosses in a straight
-  line along whichever grid axis gives the shorter span (decking over bars
-  narrower than four cells), the road runs on along that axis until the
-  line ahead is clear of water, then resumes toward its goal
+  height field, preferring gentle slopes and avoiding water. Its corners are
+  cut off (two Chaikin passes) so the road curves through a change of
+  direction instead of turning one, then it is stamped a square at a time
+  along the line, two cells wide, as a gravel surface override that keeps
+  the terrain's ramps. At water the road stops on the bank, a plank deck
+  crosses in a straight line along whichever grid axis gives the shorter
+  span (decking over bars narrower than four cells), the road runs on along
+  that axis until the line ahead is clear of water, then resumes toward its
+  goal
+- Road edges are drawn by the shader, not by the cells. Every road and
+  street column is marked in a second wrapping map beside the material map
+  (`WorldGen.road_map`), and a ground top face is gravel where that map's
+  bilinear samples come out above a half and the ground it was laid over
+  where they do not. The half contour runs along the cell boundary down a
+  straight edge and cuts the corner at a step, so a rasterised turn shows as
+  the curve it stands for: convex where the road turns away, concave in the
+  crook of a bend, and the same on any slope, for no geometry at all. The B
+  key, which turns the material blend off, turns this off with it
 - Caves: one level of passages and caverns at a fixed depth under the whole
   world (feet at `CAVE_Y`, three cubes tall), following the zero contour of
   a worm noise and the peaks of a cavern noise. Rock is placed only where a
@@ -308,7 +320,7 @@ with `class_name` so the class cache exists):
 | Z | toggle the auto zoom: the camera closes in by 1.4x inside the town wall and 2x indoors, easing over 0.4 s |
 | C | toggle the knock-down (active only when something is overhead) and the occluder cuts |
 | V | toggle the level slice (active only when something is overhead) |
-| B | toggle material blending between grass, sand, stone and snow |
+| B | toggle material blending between grass, sand, stone and snow, and with it the road edges |
 | Esc | quit |
 
 ## Layout

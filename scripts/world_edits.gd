@@ -8,6 +8,10 @@ extends RefCounted
 var chunk_size := 32
 var heights := {}  # Vector2i(x, z) -> int
 var surfaces := {}  # Vector2i(x, z) -> tile: material for the column top (cubes and slopes alike)
+## Every column a road or a street was laid on, however it was laid. The
+## generator paints these into WorldGen.road_map, whose contour the shader
+## follows instead of the cell edges, so a road's corners come out rounded.
+var roads := {}    # Vector2i(x, z) -> true
 var _cells := {}   # Vector2i chunk -> { Vector3i local -> Vector2i(tile, orientation) }, tile -1 clears
 
 
@@ -17,6 +21,10 @@ func set_height(x: int, z: int, h: int) -> void:
 
 func set_surface(x: int, z: int, tile: int) -> void:
 	surfaces[Vector2i(x, z)] = tile
+
+
+func set_road(x: int, z: int) -> void:
+	roads[Vector2i(x, z)] = true
 
 
 func set_cell(p: Vector3i, tile: int, orientation: int = 0) -> void:

@@ -2,11 +2,15 @@ class_name RoadBuilder
 extends RefCounted
 
 ## Roads as edits: a coarse A* over the terrain that prefers gentle slopes
-## and avoids water, rasterised two cells wide as a gravel surface. Where a
-## road must cross water it lays a plank deck one cube above the water.
+## and avoids water, its corners rounded off and then rasterised two cells
+## wide as a gravel surface. Where a road must cross water it lays a plank
+## deck one cube above the water. The cells only say which columns the road
+## covers; its edge is drawn along the contour of WorldGen.road_map, so the
+## rasterised steps do not show.
 
 const STEP := 3          # coarse grid spacing in cells
-const WIDTH := 2
+const WIDTH := 2         # cells of a bridge deck; the road's own width is the stamp's
+const SMOOTH_PASSES := 2  # corner-cutting rounds over the coarse path
 const MAX_BRIDGE := 24   # longest straight crossing a road will attempt
 const MAX_CROSSINGS := 4  # bridges one segment may lay before giving up
 const BAR_SPAN := 4       # land this narrow between waters is bridged over
@@ -47,18 +51,44 @@ static func build(gen: WorldGen, from: Vector2i, to: Vector2i) -> int:
 	var path := grid.get_id_path(start, goal)
 	if path.is_empty():
 		return 0
+	# The coarse path turns whole right angles between waypoints three cells
+	# apart. Rounding those corners off first is what keeps the road from
+	# throwing an elbow out where it changes direction.
+	var line := PackedVector2Array([Vector2(from)])
+	for i in range(1, path.size() - 1):
+		line.append(Vector2(lo + path[i] * STEP))
+	line.append(Vector2(to))
+	line = _smooth(line)
 	var laid := 0
 	var prev := from
-	for i in range(1, path.size()):
-		var p: Vector2i = lo + path[i] * STEP
-		if i == path.size() - 1:
-			p = to
+	for i in range(1, line.size()):
+		var p := Vector2i(roundi(line[i].x), roundi(line[i].y))
+		if p == prev:
+			continue
 		laid += _lay_segment(gen, prev, p)
 		prev = p
 	return laid
 
 
-## Rasterises a straight segment, WIDTH cells wide. Where the segment meets
+## Chaikin's corner cutting: each pass replaces every span between two
+## waypoints with its quarter and three-quarter points, which rounds off
+## each corner and leaves the two ends where they were.
+static func _smooth(pts: PackedVector2Array) -> PackedVector2Array:
+	for _pass in SMOOTH_PASSES:
+		if pts.size() < 3:
+			break
+		var out := PackedVector2Array([pts[0]])
+		for i in range(pts.size() - 1):
+			var a := pts[i]
+			var b := pts[i + 1]
+			out.append(a.lerp(b, 0.25))
+			out.append(a.lerp(b, 0.75))
+		out.append(pts[pts.size() - 1])
+		pts = out
+	return pts
+
+
+## Rasterises a straight segment two cells wide. Where the segment meets
 ## water the road stops at the bank, a bridge crosses in a straight line
 ## along the axis the crossing mostly follows, and the road resumes from the
 ## landing toward the segment's end.
@@ -66,7 +96,6 @@ static func _lay_segment(gen: WorldGen, a: Vector2i, b: Vector2i, crossings: int
 	var laid := 0
 	var d := b - a
 	var steps := maxi(absi(d.x), absi(d.y))
-	var side := Vector2i(0, 1) if absi(d.x) >= absi(d.y) else Vector2i(1, 0)
 	for i in range(0, steps + 1):
 		var t := float(i) / maxf(steps, 1)
 		var c := Vector2i(roundi(lerpf(a.x, b.x, t)), roundi(lerpf(a.y, b.y, t)))
@@ -86,13 +115,25 @@ static func _lay_segment(gen: WorldGen, a: Vector2i, b: Vector2i, crossings: int
 			# end is clear of water, so one crossing is one bridge.
 			var guard := 0
 			while guard < 12 and _water_ahead(gen, landing, b):
-				for k in WIDTH:
-					laid += _lay_road_cell(gen, landing + Vector2i(dir.y, dir.x).abs() * k)
+				laid += _lay_road_square(gen, landing)
 				landing += dir
 				guard += 1
 			return laid + _lay_segment(gen, landing, b, crossings + 1)
-		for k in WIDTH:
-			laid += _lay_road_cell(gen, c + side * k)
+		laid += _lay_road_square(gen, c)
+	return laid
+
+
+## A road cell and the three cells that finish the square toward +x and +z,
+## so the band stays the same two cells wide and centred on the line
+## however the line turns. Stamping a cell and one neighbour to a side
+## picked per segment instead threw the road a cell sideways every time a
+## segment went from x-major to z-major, which is where the elbows came
+## from.
+static func _lay_road_square(gen: WorldGen, c: Vector2i) -> int:
+	var laid := 0
+	for dz: int in [0, 1]:
+		for dx: int in [0, 1]:
+			laid += _lay_road_cell(gen, c + Vector2i(dx, dz))
 	return laid
 
 
@@ -152,8 +193,13 @@ static func _lay_bridge(gen: WorldGen, start: Vector2i, dir: Vector2i) -> Vector
 	return landing
 
 
+## Lays one road column, counting it only the first time: consecutive
+## stamps overlap heavily, and the town's streets are already road.
 static func _lay_road_cell(gen: WorldGen, c: Vector2i) -> int:
 	var e := gen.edits
+	if e.roads.has(c):
+		return 0
+	e.set_road(c.x, c.y)
 	if e.heights.has(c) and e.surfaces.has(c):
 		return 0  # town streets already here
 	e.set_surface(c.x, c.y, TileLibrary.Tile.GRAVEL)

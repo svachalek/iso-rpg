@@ -81,6 +81,10 @@ material_map={
 "type": "sampler2D",
 "value": ""
 }
+road_map={
+"type": "sampler2D",
+"value": ""
+}
 blend_enabled={
 "type": "float",
 "value": 1.0

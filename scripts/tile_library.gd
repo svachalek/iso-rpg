@@ -193,8 +193,11 @@ const FLAT_STEP_TILES: Array[int] = [Tile.ROOF]
 ## Planks only exist as stairs and landings: straight ramps and flat slabs
 ## within one cube. The pathfinder treats plank pieces as floors.
 const STAIR_TILES: Array[int] = [Tile.PLANKS]
-## Natural ground whose top faces blend into each other via the material map.
-const TERRAIN_TILES: Array[int] = [Tile.GRASS, Tile.DIRT, Tile.STONE, Tile.SAND, Tile.SNOW]
+## Tiles whose top faces the shader repaints from the maps: natural ground
+## blends into its neighbours via the material map, and gravel is cut back
+## to the road map's contour, showing the ground it was laid over outside
+## it. Everything else keeps the texture it was baked with.
+const TERRAIN_TILES: Array[int] = [Tile.GRASS, Tile.DIRT, Tile.STONE, Tile.SAND, Tile.SNOW, Tile.GRAVEL]
 
 ## Corner order: 0 = (-x,-z), 1 = (+x,-z), 2 = (+x,+z), 3 = (-x,+z).
 static var _patches: Array[PackedInt32Array] = []  # canonical corner quarters per patch shape

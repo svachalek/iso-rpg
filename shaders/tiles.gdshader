@@ -33,6 +33,14 @@ uniform float terrain_blend = 0.0;   // 1 for natural ground tiles: blend materi
 // grass, sand, stone and snow; the remainder is water. Sampled bilinearly
 // so boundaries between materials blend over a cell or two.
 global uniform sampler2D material_map : filter_linear, repeat_enable;
+// One texel per world column on the same grid: 1 on a road column, 0 off
+// it. A road is rasterised whole cells at a time, so its turns come out as
+// stair steps; the 0.5 contour of this map's bilinear samples is taken as
+// the road's edge instead of the cell boundary. On a straight stretch the
+// contour lies exactly on the boundary, and at a step it rounds the corner
+// off, convex or concave as the four columns around it fall. Done by
+// fragment, so it costs no geometry and follows any slope the road climbs.
+global uniform sampler2D road_map : filter_linear, repeat_enable;
 global uniform float blend_enabled;   // 0 shows each cube's own material (B key)
 #ifdef WATER
 uniform sampler2D depth_tex : hint_depth_texture, filter_nearest;
@@ -154,18 +162,29 @@ void fragment() {
 			// fades out of the map just as grass cubes begin, so the last
 			// sand cubes before the grass carry next to no sand weight, and
 			// keeping their own texture drew them as a hard-edged patch.
-			bool natural = own == 0 || own == 1 || own == 4
+			// Gravel is only ever a road or a street, so it blends too: the
+			// ground it was laid over is what shows wherever the road
+			// contour has left its cell.
+			bool natural = own == 0 || own == 1 || own == 4 || own == 11
 				|| (own == 3 && w.b > 0.001) || (own == 6 && w.a > 0.001);
+			// Explicit derivatives from the baked UV: the remapped
+			// coordinates jump at face edges and would pick a blurry mip.
+			vec2 dx = dFdx(UV);
+			vec2 dy = dFdy(UV);
 			if (natural && land > 0.001) {
 				int g = top_face ? 0 : 1;
-				// Explicit derivatives from the baked UV: the remapped
-				// coordinates jump at face edges and would pick a blurry mip.
-				vec2 dx = dFdx(UV);
-				vec2 dy = dFdy(UV);
 				ALBEDO = (w.r * textureGrad(atlas, slot_uv(g, local), dx, dy).rgb
 					+ w.g * textureGrad(atlas, slot_uv(4, local), dx, dy).rgb
 					+ w.b * textureGrad(atlas, slot_uv(3, local), dx, dy).rgb
 					+ w.a * textureGrad(atlas, slot_uv(6, local), dx, dy).rgb) / land;
+			}
+			// The road over the ground, cut at the map's 0.5 contour and
+			// carried a pixel or so past it so the edge does not crawl.
+			if (top_face) {
+				float road = texture(road_map, world_pos.xz / MAP_SIZE).r;
+				float aa = max(fwidth(road), 0.002);
+				ALBEDO = mix(ALBEDO, textureGrad(atlas, slot_uv(11, local), dx, dy).rgb,
+					smoothstep(0.5 - aa, 0.5 + aa, road));
 			}
 			// Wet ground at the waterline.
 			ALBEDO *= 1.0 - 0.3 * water;

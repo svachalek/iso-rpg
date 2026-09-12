@@ -422,6 +422,8 @@ func _streets(e: WorldEdits) -> void:
 			for k in 2:
 				e.set_surface(origin.x + s + k, origin.y + i, g)
 				e.set_surface(origin.x + i, origin.y + s + k, g)
+				e.set_road(origin.x + s + k, origin.y + i)
+				e.set_road(origin.x + i, origin.y + s + k)
 
 
 ## Where each street leaves the flat ground, as (start column, outward direction).
@@ -624,6 +626,7 @@ func _house(e: WorldEdits, lay: Layout) -> void:
 		if _on_street(p.x) or _on_street(p.y):
 			break
 		e.set_cell(_w(p.x, h, p.y), TileLibrary.Tile.GRAVEL)
+		e.set_road(origin.x + p.x, origin.y + p.y)
 		p += out
 
 	# Upper floors: a plank floor over the interior, reached by the stair
