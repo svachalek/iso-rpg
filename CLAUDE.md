@@ -147,8 +147,9 @@ cannot use `call()`.
   exactly.
 - A wall piece stands three cubes tall in what used to be one cell, so a
   cut had to pass through the middle of it and left it hollow. Pieces
-  marked `"rows": true` are therefore built twice: once whole (which is all
-  the `--furniture` gallery shows) and once per cube, with `_row_clip`
+  marked `"rows": true` are therefore built a cube at a time and never
+  whole: a wall stands in the world as its cubes and nothing else, and the
+  `--furniture` gallery shows the stack. Each cube is built with `_row_clip`
   clamping every box to that cube's slab. A clamped box closes itself, so
   the blocks need no cap code — but that only holds because every wall
   builder emits nothing but `_bevel_box` (through `_wall_beam`,
@@ -157,9 +158,12 @@ cannot use `call()`.
   `_tri_prism` or `_poly_prism`, or tilts a box, will not clip and will
   come out hollow again. Blocks overlap by `ROW_OVERLAP`, or the chamfer on
   each clipped edge draws a line across the wall at every course. Their ids
-  run from `WALL_ROW_BASE`, and they take `knockdown` 4: knocked down by
-  the same facing test as a wall, but taken by whole cells like a cube, and
-  taken as soon as the cell reaches the cut so a cube is left standing.
+  run from `WALL_ROW_BASE`. Every wall in the world, the town's and a
+  house's alike, is then one cube in its cell on `_wall_mat`: `knockdown` 1
+  is the facing test plus a cut by whole cells, taken a cell earlier than
+  anything else so a cube is left standing. Only what hangs on a wall
+  (`knockdown` 2) is still cut through, a shelf mounted above the cut being
+  meant to go with the wall that carried it.
 - Height fields snap to quarter cubes; pieces are chosen by best fit, so
   a column that looks wrong is usually a range problem in `surface_piece`.
 - `WorldGen.fill_chunk` runs on a worker thread, writing into a

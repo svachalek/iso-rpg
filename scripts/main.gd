@@ -952,8 +952,16 @@ func _place_furniture_samples() -> void:
 	var x0 := town.origin.x + 2
 	var z := town.origin.y + 2
 	for kind: int in TileLibrary.FURNITURE_SPECS:
+		# A wall piece exists only as the cubes it is built from, so show
+		# the stack, which is what the town is made of.
+		var rows: bool = TileLibrary.FURNITURE_SPECS[kind].get("rows", false)
 		for k in 4:
-			e.set_cell(Vector3i(x0 + k * 4, y, z), TileLibrary.furniture_id(kind), TileLibrary.rotation_index(k))
+			if rows:
+				for row in TileLibrary.WALL_ROWS:
+					e.set_cell(Vector3i(x0 + k * 4, y + row, z),
+						TileLibrary.wall_row_id(kind, row), TileLibrary.rotation_index(k))
+			else:
+				e.set_cell(Vector3i(x0 + k * 4, y, z), TileLibrary.furniture_id(kind), TileLibrary.rotation_index(k))
 		z += 3
 		if z > town.origin.y + TownBuilder.SIZE - 4:
 			z = town.origin.y + 2

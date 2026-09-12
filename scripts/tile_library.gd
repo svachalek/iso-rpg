@@ -192,8 +192,7 @@ const FURNITURE_SPECS := {
 	Furniture.WALL_PILLAR_CAP: {"build": "wall_block", "size": Vector2i(1, 1)},
 }
 static var _furniture_mat: ShaderMaterial = null
-static var _wall_mat: ShaderMaterial = null   # wall pieces: knocked down to waist height in front of the character
-static var _wall_block_mat: ShaderMaterial = null   # one cube of a wall piece: knocked down by whole cells
+static var _wall_mat: ShaderMaterial = null   # one cube of a wall: knocked down in front of the character, by whole cells
 static var _hung_mat: ShaderMaterial = null   # wall-hung pieces: as the wall behind their cell
 static var _structure_mat: ShaderMaterial = null   # stairs: cut with an occluding building, never knocked down
 static var _glow_mat: ShaderMaterial = null
@@ -794,22 +793,20 @@ static func _wall_row_mesh(mesh: ArrayMesh, row: int) -> ArrayMesh:
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
 	st.append_from(mesh, 0, Transform3D(Basis.IDENTITY, Vector3(0, -row, 0)))
-	st.set_material(_wall_block_mat)
+	st.set_material(_wall_mat)
 	return st.commit()
 
 
 static func _make_furniture_mats(tex: Texture2D) -> void:
 	_furniture_mat = _make_material(tex, "")
 	_furniture_mat.set_shader_parameter("cutout_exempt", 1.0)
+	# Every wall in the world is a cube in its cell, the town's and a
+	# house's alike, so the cuts take it the way they take a cube of
+	# terrain. Only the small things hung on a wall are still cut through.
 	_wall_mat = _furniture_mat.duplicate()
 	_wall_mat.set_shader_parameter("knockdown", 1.0)
 	_hung_mat = _furniture_mat.duplicate()
 	_hung_mat.set_shader_parameter("knockdown", 2.0)
-	# One cube of a wall: it goes with the wall it belongs to, by the same
-	# facing test, but a block fills its cell so the cut takes it whole
-	# rather than through the middle of it.
-	_wall_block_mat = _furniture_mat.duplicate()
-	_wall_block_mat.set_shader_parameter("knockdown", 4.0)
 	_structure_mat = _furniture_mat.duplicate()
 	_structure_mat.set_shader_parameter("cutout_exempt", 0.0)
 	_glow_mat = _make_material(tex, "GLOW")
@@ -859,15 +856,15 @@ static func _add_furniture(lib: MeshLibrary, atlas: Texture2D) -> void:
 	if _furniture_mat == null:
 		_make_furniture_mats(atlas)
 	for kind in built:
-		# A piece marked "rows" is built once whole (which is what the
-		# furniture gallery shows) and then once per cube, with the clip
-		# window keeping only that cube's slab of every box.
+		# A piece marked "rows" is built once per cube, the clip window
+		# keeping only that cube's slab of every box, and never whole: a
+		# wall stands in the world as its cubes and nothing else.
 		var rows: bool = FURNITURE_SPECS[kind].get("rows", false)
-		for step in (WALL_ROWS + 1 if rows else 1):
-			var row := step - 1 if rows else -1   # -1 builds the whole piece
+		for step in (WALL_ROWS if rows else 1):
+			var row := step if rows else -1   # -1 is a piece not built in rows
 			_row_clip = Vector2(-1e9, 1e9) if row < 0 \
 				else Vector2(row - 0.5 - ROW_OVERLAP, row + 0.5 + ROW_OVERLAP)
-			var id := furniture_id(kind) if row < 0 else wall_row_id(kind, row)
+			var id := wall_row_id(kind, row) if rows else furniture_id(kind)
 			var mesh: ArrayMesh
 			match kind:
 				Furniture.FIREPLACE: mesh = _build_fireplace()
@@ -1358,7 +1355,7 @@ const BLOCK_STONES: Array[Array] = [
 static func _build_wall_block(kind: int) -> ArrayMesh:
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
-	st.set_material(_structure_mat)
+	st.set_material(_wall_mat)
 	var yr := Vector2(-0.5, 0.5)
 	match kind:
 		Block.CAP:

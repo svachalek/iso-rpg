@@ -98,6 +98,10 @@ Shades the pack uses, and that look right next to it:
   scene; always run with `--quit-after`.
 - Item ids are 16-bit: shapes pack as `shape * 32 + tile` below
   `PROP_BASE` (60000); furniture ids start at `FURNITURE_BASE` (61000).
+- Wall pieces share one material, `_wall_mat`: a wall is a cube in its
+  cell, knocked down by the facing test its tangent carries and cut by
+  whole cells. `_hung_mat` is for what hangs on one, `_structure_mat` for
+  a stair, which an occluding building takes but the knock-down never does.
 - A piece taller than its cell gets cut through the middle of its boxes and
   shows hollow along the cut. Drawing it two-sided is not the answer,
   though it is for a tree: a wall is an assembly of butting boxes whose

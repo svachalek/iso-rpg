@@ -244,15 +244,16 @@ same scale; there is no zoom-in view.
     face the camera are cut to waist height, one cube over the feet, so the
     room opens up while its far walls and everything in it stay as they are.
     Cut heights are whole cubes, so cubes, floors and furniture are cut by
-    cell rather than by fragment, which keeps the cut edges clean. Wall
-    pieces are three cubes tall where they used to stand in one cell, so
-    they are built again as one-cube blocks and stacked: a block fills its
-    cell, the cut takes it whole, and what is left is the solid top of the
-    block below. A block goes as soon as its own cell reaches the cut, so
-    a knocked-down wall stands one cube, waist height on a two-cube figure.
-    Wall-hung pieces are still cut by fragment, being small enough that a
-    cut through one rarely shows. The wall the character stands in the
-    doorway of counts as facing the camera. A wall piece's facing is
+    cell rather than by fragment, which keeps the cut edges clean. Walls
+    are no exception: every one of them, the town's and a house's alike,
+    is a cube filling its cell, so the cut takes it whole and what is left
+    is the solid top of the cube below. A wall goes as soon as its own
+    cell reaches the cut, one cell before anything else, so a knocked-down
+    wall stands a cube high, waist height on a two-cube figure. Only
+    wall-hung pieces are cut through, being small enough that a cut across
+    one rarely shows, and a shelf mounted above the cut should go with the
+    wall that carried it. The wall the character stands in the doorway of
+    counts as facing the camera. A wall piece's facing is
     baked into its vertex tangents, since a GridMap gives the shader no
     per-instance transform
   - occluders: a building standing between the camera and the character
