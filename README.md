@@ -23,7 +23,8 @@ same scale; there is no zoom-in view.
   the figure goes on a piece is measured from the model (`sit` and `lie` in
   `FURNITURE_SPECS`) and where it goes on the figure from the pose of the
   pack's own animation. Its cell stays the one beside the piece, so
-  pathfinding and the cuts carry on as before
+  pathfinding and the cuts carry on as before, though it is the piece that
+  others find taken
 - A day and a night in five minutes (`--daylen=`): one directional light is
   the sun by day and the moon by night, climbing from the east, crossing at
   noon and setting in the west, reddening as it nears the horizon. The sky,
@@ -59,7 +60,21 @@ same scale; there is no zoom-in view.
   shifted a few minutes off their neighbours'. Anyone standing on a floor
   the slice or the occluder cut has taken away is not drawn: those cuts
   are the shader's doing and never touched these figures
-- Monsters (scripts/monsters.gd), only to look at so far: skeletons from
+- Nobody shares a cell: a figure holds the cell it stands on, and while
+  it walks both the cell it left and the one it is stepping into, so one on
+  the move is caught on either until it arrives. One seated or lying down
+  holds the chair or bed, and the floor beside it is free to walk on; it
+  gets up onto the cell it sat down from, or another free one beside the
+  piece if somebody stands there, and walking into a seat in use is
+  walking into whoever sits in it. The player, asked to step into somebody's, starts toward them and
+  springs back. Walked into, a townsman says something in a speech bubble
+  (scripts/popups.gd) and, if only standing about, turns to the player; a
+  skeleton takes a swing of the knight's sword, 2d6 when the blade lands,
+  shown as a number rising off it. The townsfolk and the skeletons never
+  step into a taken cell: they plan around whoever stands in the way,
+  wait for them otherwise, and after a second give the walk up and plan
+  it again
+- Monsters (scripts/monsters.gd), which can be hit but do not fight back yet: skeletons from
   the CC0 KayKit Skeletons pack (assets/kaykit_skeletons), a warrior with
   axe and shield, a minion with a blade, a rogue with two daggers and a
   mage with a staff. The models carry no clips of their own but are on the
@@ -74,7 +89,10 @@ same scale; there is no zoom-in view.
   underground, where the caves under the town count too. One only moves while it is on screen
   or within 20 cells, counting the depth between them, so one on another
   level is out of mind; otherwise it stands frozen, animation and all, and
-  once it is out of sight and more than 48 cells off it is taken away. Their
+  once it is out of sight and more than 48 cells off it is taken away.
+  Each has 10 hit points; a hit makes it flinch and turn on the player,
+  and one knocked to nothing collapses into a heap of bones that lies
+  there a few seconds before it goes. Their
   walks are six cells or so, planned one at a time and a few a second at
   most, and their models are read at startup so none stalls a frame by
   turning up
@@ -344,6 +362,9 @@ Optional user args go after `--`:
     --noshadows           no sun shadows, to tell shadow trouble from the rest
     --walk=seat           walk to the nearest chair or stool and sit on it
     --walk=bed            walk to the nearest bed and lie on it
+    --fight               with --selftest or --screenshot: put a skeleton down by the player and walk into it until it falls
+    --greet               likewise: walk into the nearest townsman, who says hello
+    --getup               with --walk=seat or --walk=bed: stand somebody where the player sat down from, then get up
     --shapes              with --nowalk: lay out every shape and rotation by the gate
     --furniture           with --nowalk: an empty town with every furniture kind in four rotations
     --nature              an empty town with every nature piece in every colour loaded, then the props
@@ -364,6 +385,8 @@ with `class_name` so the class cache exists):
 | Shift | walk: a fifth of running speed while held, the pace of the townsfolk |
 | Left click | walk to the clicked column; clicks pass through sliced roofs and cut-down buildings |
 | Click or walk into a chair, stool or bed | sit or lie down on it; walking or clicking anywhere else gets up again |
+| Walk or click into a townsman | they greet you |
+| Walk or click into a skeleton | attack it for 2d6; hold the key to keep swinging |
 | Q / E | rotate camera 90 degrees |
 | Mouse wheel | zoom, on top of the auto zoom |
 | Z | toggle the auto zoom: the camera closes in by 1.4x inside the town wall and 2x indoors, easing over 0.4 s |
@@ -381,7 +404,11 @@ with `class_name` so the class cache exists):
     scripts/road_builder.gd   Roads and bridges as edits
     scripts/chunk_manager.gd  Chunk streaming, world cell lookup
     scripts/pathfinder.gd     Stand-cell rules and A* over feet cells, cave floors, upper floors and stairs included
-    scripts/player.gd         Walking figure: the knight model and its animations
+    scripts/figure.gd         A walking figure: model, animations, seats and beds, who holds which cell
+    scripts/player.gd         The knight the user drives, its attacks and x-ray silhouette
+    scripts/townsfolk.gd      The townsfolk's days and greetings
+    scripts/monsters.gd       Skeletons: spawning, wandering, hit points
+    scripts/popups.gd         Speech bubbles and damage numbers over figures
     scripts/camera_rig.gd     Isometric orthographic camera
     scripts/main.gd           Wiring, input, HUD, self-test, shader globals
     shaders/tiles.gdshader    Atlas lookup plus the knock-down, occluder cuts, cave walls and slice

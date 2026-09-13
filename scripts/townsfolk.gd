@@ -40,6 +40,19 @@ const FIRES: Array = [TileLibrary.Furniture.FIREPLACE]
 ## standing at the market with one's wares held out.
 const COUNTER_WORK: Array[String] = ["Working_A", "Working_B", "Working_C"]
 const MARKET_WORK: Array[String] = ["Holding_A", "Holding_B", "Holding_C"]
+## What someone says when the player walks into them, now and then a
+## greeting for the hour instead.
+const GREETINGS: Array[String] = [
+	"Well met, traveller.", "Mind where you're going!", "Oof! Watch it.",
+	"Fine day, isn't it?", "Can I help you?", "Hello there.",
+	"Pardon me.", "Stay out of trouble, now.", "Been to the market yet?",
+	"You're not from around here.", "Careful beyond the walls.",
+]
+const MORNING_GREETING := "Good morning!"
+const EVENING_GREETING := "Good evening."
+## Milliseconds someone who gave up on a blocked step waits before
+## planning again, for whoever stood in the way to move on.
+const BLOCKED_WAIT_MS := 600
 
 
 ## One townsman: the figure, and where they are to be through the day.
@@ -55,6 +68,7 @@ class Person:
 	var claim: Array[Vector3i] = []
 	var walking := false
 	var settled := false     # standing (or sitting) where this stop wants
+	var retry_at := 0        # msec before which no new walk is planned
 
 
 var _plans := 0       # paths planned, and what they cost: A* is the dear part
@@ -99,6 +113,7 @@ func setup(town: TownBuilder, finder: GridPathfinder, player: Figure) -> void:
 	for i in _people.size():
 		var p := _people[i]
 		p.fig.arrived.connect(_on_arrived.bind(p))
+		p.fig.blocked.connect(_on_blocked.bind(p))
 	print("townsfolk: %d people in %d houses" % [_people.size(), town.homes.size()])
 
 
@@ -109,6 +124,7 @@ func _add_person(home: TownBuilder.Home, bed: Vector3i, inns: Array) -> void:
 	p.fig.model_file = MODELS[i % MODELS.size()]
 	p.fig.name = "Townsman%d" % i
 	p.fig.feet_height = _finder.feet_height
+	p.fig.stand_spots = _finder.furniture_approaches
 	p.fig.speed_scale = Figure.WALK_SCALE
 	add_child(p.fig)
 	p.fig.place(bed)
@@ -206,7 +222,7 @@ func update(time: float) -> void:
 		p.fig.visible = dist < SHOW_RADIUS and not cut
 		# Someone who walked in from out of sight, or was put down before
 		# their chunk was there, tries again once the player is near.
-		if not p.settled and not p.walking and dist < SIM_RADIUS and not _pending.has(p):
+		if not p.settled and not p.walking and dist < SIM_RADIUS and not _pending.has(p) and Time.get_ticks_msec() >= p.retry_at:
 			_pending.append(p)
 	# One path every few frames: everybody changing places on the same tick
 	# would plan a dozen searches at once, and that shows.
@@ -258,7 +274,11 @@ func _start_walk(p: Person) -> bool:
 	var spot: Vector3i = goal
 	var leg := _leg(p.fig.cell, spot)
 	var t0 := Time.get_ticks_usec()
-	var path := _finder.find_path(p.fig.cell, leg, LEG_MARGIN)
+	# Around anyone standing in the way; failing that, through them, to
+	# wait there for them to move.
+	var path := _finder.find_path(p.fig.cell, leg, LEG_MARGIN, Figure.occupied_cells(p.fig))
+	if path.is_empty():
+		path = _finder.find_path(p.fig.cell, leg, LEG_MARGIN)
 	if path.is_empty() and leg != spot and _span(p.fig.cell, spot) <= FULL_SPAN:
 		# Nothing that way around, and near enough to search the whole way.
 		# Further than that it is cheaper to put them there than to look.
@@ -298,10 +318,11 @@ func _leg(from: Vector3i, to: Vector3i) -> Vector3i:
 ## second to a taken seat stands beside it instead. Null when the ground
 ## there is not loaded, which is most of the world.
 func _standing_spot(p: Person) -> Variant:
-	if p.use and _taken(p.target, p):
+	var piece := _finder.furniture_at(p.target)
+	if p.use and (_taken(p.target, p) or (not piece.is_empty() and Figure.occupant(piece[1], p.fig) != null)):
 		p.use = false
 	var cells: Array[Vector3i] = []
-	if not _finder.furniture_at(p.target).is_empty():
+	if not piece.is_empty():
 		cells = _finder.furniture_approaches(p.target)
 	elif _finder.is_standable(p.target):
 		cells = [p.target]
@@ -322,6 +343,8 @@ func _standing_spot(p: Person) -> Variant:
 
 ## Whether somebody else stands at, is walking to, or uses this cell.
 func _taken(c: Vector3i, by: Person) -> bool:
+	if Figure.occupant(c, by.fig) != null:
+		return true  # the player, or anyone standing there unclaimed
 	for q in _people:
 		if q != by and q.claim.has(c):
 			return true
@@ -379,12 +402,38 @@ func _settle(p: Person) -> void:
 		return
 	var pose := Figure.rest_pose(f[0], f[1], f[2])
 	if not pose.is_empty():
-		p.fig.rest(pose[0], pose[1], pose[2])
+		p.fig.rest(pose[0], pose[1], pose[2], f[1])
 
 
 func _on_arrived(p: Person) -> void:
 	if p.walking:
 		_settle(p)
+
+
+## Somebody stood in the way long enough for the walk to be given up: plan
+## it again in a moment, around them if there is a way.
+func _on_blocked(_other: Figure, p: Person) -> void:
+	p.walking = false
+	p.settled = false
+	p.retry_at = Time.get_ticks_msec() + BLOCKED_WAIT_MS
+
+
+func owns(fig: Figure) -> bool:
+	return fig.get_parent() == self
+
+
+## A greeting for the player, who has just walked into `fig`, at `time` of
+## day. Someone standing about, not at work nor seated, turns to face them.
+func greet(fig: Figure, time: float) -> String:
+	for p in _people:
+		if p.fig == fig and not fig.is_moving() and not fig.is_resting() and (p.activity == "" or not p.settled):
+			fig.face_point(_player.global_position)
+	var roll := randi() % (GREETINGS.size() + 2)
+	if roll == GREETINGS.size() and time > 0.2 and time < 0.45:
+		return MORNING_GREETING
+	if roll == GREETINGS.size() + 1 and time > 0.7 and time < 0.9:
+		return EVENING_GREETING
+	return GREETINGS[roll % GREETINGS.size()]
 
 
 ## Who is where, for --folk.

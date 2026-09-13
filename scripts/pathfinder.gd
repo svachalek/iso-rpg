@@ -191,8 +191,9 @@ func step_target(from: Vector3i, dx: int, dz: int) -> Variant:
 ## `margin` is how far outside the box between the ends the search may
 ## wander, to get around what stands between them. Every column in that
 ## box becomes a node, so a wide margin on a short walk costs more than
-## the walk itself: the townsfolk ask for a narrow one.
-func find_path(start: Vector3i, goal: Vector3i, margin: int = MARGIN) -> Array[Vector3i]:
+## the walk itself: the townsfolk ask for a narrow one. Cells in `avoid`
+## (a set, as Figure.occupied_cells gives) are left out, the ends excepted.
+func find_path(start: Vector3i, goal: Vector3i, margin: int = MARGIN, avoid: Dictionary = {}) -> Array[Vector3i]:
 	var out: Array[Vector3i] = []
 	var minx := mini(start.x, goal.x) - margin
 	var maxx := maxi(start.x, goal.x) + margin
@@ -213,17 +214,22 @@ func find_path(start: Vector3i, goal: Vector3i, margin: int = MARGIN) -> Array[V
 				continue
 			by_col[Vector2i(x, z)] = cs
 			for c in cs:
-				ids[c] = cells.size()
 				# Kept: every neighbour check below asks for both ends'
 				# heights, and each one is a lookup through the chunks.
 				# A search of a few hundred columns asks thousands of times.
 				var h := feet_height(c)
 				heights[c] = h
+				# Somebody standing there still leaves the corner open.
+				if avoid.has(c) and c != start and c != goal:
+					continue
+				ids[c] = cells.size()
 				astar.add_point(cells.size(), Vector3(c.x, h, c.z))
 				cells.append(c)
 
 	for col: Vector2i in by_col:
 		for c: Vector3i in by_col[col]:
+			if not ids.has(c):
+				continue
 			for dz in range(-1, 2):
 				for dx in range(-1, 2):
 					if dx == 0 and dz == 0:
@@ -232,7 +238,7 @@ func find_path(start: Vector3i, goal: Vector3i, margin: int = MARGIN) -> Array[V
 					if not by_col.has(ncol):
 						continue
 					for n: Vector3i in by_col[ncol]:
-						if absf(float(heights[c]) - float(heights[n])) > 1.0:
+						if not ids.has(n) or absf(float(heights[c]) - float(heights[n])) > 1.0:
 							continue
 						if dx != 0 and dz != 0:
 							# No cutting corners around blocked or steep cells.

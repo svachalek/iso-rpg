@@ -47,6 +47,7 @@ var _sun: DirectionalLight3D
 var _env: Environment
 var folk: Townsfolk
 var monsters: Monsters
+var popups: Popups
 var _torch: OmniLight3D
 var _rest_on_arrival: Variant = null  # feet cell of the seat or bed to use when the walk ends
 ## The clock everything in the world keeps: a fraction of a day. Starts in
@@ -157,7 +158,9 @@ func _ready() -> void:
 			_rest_on_arrival = null
 			_try_rest.call_deferred(c))
 	player.step_provider = _key_step
+	player.bumped.connect(_on_player_bumped)
 	player.feet_height = finder.feet_height
+	player.stand_spots = finder.furniture_approaches
 	# The character's light underground: a warm pool a few cells across.
 	_torch = OmniLight3D.new()
 	_torch.name = "Torch"
@@ -234,6 +237,11 @@ func _ready() -> void:
 	for a: String in ["--nomonsters", "--furniture", "--nature", "--shapes"]:
 		if a in OS.get_cmdline_user_args():
 			monsters.enabled = false
+
+	popups = Popups.new()
+	popups.name = "Popups"
+	popups.camera = rig.camera
+	add_child(popups)
 
 	_setup_marker()
 	_setup_hud()
@@ -592,6 +600,38 @@ func _key_step() -> Variant:
 	return n
 
 
+## The player walked into somebody: a townsman says hello, a monster takes
+## a swing of the sword.
+func _on_player_bumped(other: Figure) -> void:
+	_hide_marker()
+	_rest_on_arrival = null
+	if folk.owns(other):
+		popups.say(other, folk.greet(other, time_of_day))
+	elif monsters.owns(other):
+		_attack(other)
+
+
+## Swings at a monster, and when the blade lands rolls 2d6 against it.
+func _attack(target: Figure) -> void:
+	player.face_point(target.global_position)
+	var clip: String = Player.ATTACKS[randi() % Player.ATTACKS.size()]
+	var length := player.play_once(clip)
+	await get_tree().create_timer(length * Player.ATTACK_LANDS).timeout
+	if not is_instance_valid(target) or target.is_dead():
+		return
+	var damage := randi_range(1, 6) + randi_range(1, 6)
+	var result := monsters.hit(target, damage, player.global_position)
+	if result.is_empty():
+		return
+	popups.damage(target, damage)
+	var hp: int = result[1]
+	if hp > 0:
+		_status = "You hit the %s for %d (%d hp left)." % [result[0], damage, hp]
+	else:
+		_status = "You hit the %s for %d. It falls apart." % [result[0], damage]
+	print("attack: ", _status)
+
+
 ## Sits on the seat or lies on the bed covering feet cell `c`, which the
 ## figure stands beside. Returns whether there was one to use.
 func _try_rest(c: Vector3i) -> bool:
@@ -603,7 +643,12 @@ func _try_rest(c: Vector3i) -> bool:
 	var pose := Figure.rest_pose(f[0], f[1], f[2])
 	if pose.is_empty():
 		return false
-	player.rest(pose[0], pose[1], pose[2])
+	var sitter := Figure.occupant(f[1], player)
+	if sitter != null:
+		# Somebody is using it: that is walking into them.
+		player.bump(c, sitter)
+		return true
+	player.rest(pose[0], pose[1], pose[2], f[1])
 	_hide_marker()
 	return true
 
@@ -1064,6 +1109,56 @@ func _key_test() -> void:
 		start, mid, frames, stopped, player.cell, player.is_moving()])
 
 
+## `--fight` puts a skeleton down beside the player and walks into it until
+## it falls; `--greet` walks into the nearest townsman. Either saves the
+## frame just after the last blow or the greeting with `--screenshot`.
+func _bump_test(shot: String, fight: bool) -> void:
+	var target: Figure = null
+	if fight:
+		monsters.enabled = false
+		monsters.spawn_around(player.cell, 1)
+		target = monsters.get_child(monsters.get_child_count() - 1) as Figure
+	else:
+		for f: Node in folk.get_children():
+			var fig := f as Figure
+			if fig != null and (target == null or fig.position.distance_to(player.position) < target.position.distance_to(player.position)):
+				target = fig
+	if target == null:
+		push_error("selftest: nobody to walk into")
+		get_tree().quit()
+		return
+	var yaw := 45.0
+	for b in OS.get_cmdline_user_args():
+		if b.begins_with("--yaw="):
+			yaw = float(b.trim_prefix("--yaw="))
+	for b in OS.get_cmdline_user_args():
+		if b.begins_with("--zoom="):
+			rig.snap(yaw, float(b.trim_prefix("--zoom=")))
+	print("selftest: walking into %s at %s from %s" % [target.name, target.cell, player.cell])
+	var bumps: Array = [0]  # a lambda captures a plain int by value
+	var frames := 0
+	player.bumped.connect(func(_o: Figure) -> void: bumps[0] += 1)
+	while frames < 3000:
+		await get_tree().process_frame
+		frames += 1
+		if not is_instance_valid(target) or (fight and target.is_dead()) or (not fight and int(bumps[0]) > 0):
+			break
+		if player.is_moving() or player.is_bumping() or player.is_swinging():
+			continue
+		var path := finder.find_path(player.cell, target.cell, GridPathfinder.MARGIN, Figure.occupied_cells(target))
+		if not path.is_empty():
+			player.set_path(path)
+	print("selftest: %d bumps in %d frames; %s" % [bumps[0], frames, _status])
+	# Long enough for a skeleton to have fallen and lie still.
+	await get_tree().create_timer(2.5 if fight else 0.2).timeout
+	if fight:
+		print(monsters.report())
+	if not shot.is_empty():
+		await RenderingServer.frame_post_draw
+		get_viewport().get_texture().get_image().save_png(shot)
+	get_tree().quit()
+
+
 func _run_selftest(shot: String) -> void:
 	DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_DISABLED)
 	var args := OS.get_cmdline_user_args()
@@ -1071,6 +1166,9 @@ func _run_selftest(shot: String) -> void:
 		await _key_test()
 	player.step_provider = Callable()  # keep stray keypresses out of the test
 	await get_tree().process_frame
+	if "--fight" in args or "--greet" in args:
+		await _bump_test(shot, "--fight" in args)
+		return
 	var walks := 0
 	for a in args:
 		if a.begins_with("--walk="):
@@ -1101,7 +1199,20 @@ func _run_selftest(shot: String) -> void:
 			if a == "--walk=seat" or a == "--walk=bed":
 				# Time to step on, go down and settle.
 				await get_tree().create_timer(5.0).timeout
-				print("selftest: resting %s" % player.is_resting())
+				print("selftest: resting %s, holding %s, the cell beside %s" % [
+					player.is_resting(), player.held_cells(), "free" if Figure.occupant(player.cell) == null else "held"])
+				if "--getup" in args:
+					# Somebody takes the cell the player sat down from; getting
+					# up has to find another.
+					var stand_in := Figure.new()
+					stand_in.model_file = "Rogue.glb"
+					add_child(stand_in)
+					stand_in.place(player.cell)
+					var was := player.cell
+					player.set_path([player.cell])
+					await get_tree().create_timer(3.0).timeout
+					print("selftest: got up onto %s (sat down from %s), resting %s" % [player.cell, was, player.is_resting()])
+					stand_in.queue_free()
 			print("selftest: at %s feet %.1f" % [player.cell, player.position.y])
 			print("selftest: monsters ", monsters.summary())
 			if walks > 0:

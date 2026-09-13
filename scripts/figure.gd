@@ -10,6 +10,12 @@ extends Node3D
 signal arrived
 ## The figure has set off on the final step of its path.
 signal last_step
+## A step was asked for into a cell another figure holds. A figure that
+## `bumps` starts into it and springs back; any other stops short.
+signal bumped(other: Figure)
+## A figure that does not bump has waited BLOCK_PATIENCE for the cell ahead
+## to clear and given up its path, for whoever steers it to plan again.
+signal blocked(other: Figure)
 
 const SPEED := 4.0  # world units per second
 ## Of SPEED: the player's run, and the walk the townsfolk keep and the
@@ -27,6 +33,7 @@ const PACK_DIR := "res://assets/kaykit_animations/"
 const PACK_FILES: Array[String] = [
 	"Rig_Medium_Tools.glb", "Rig_Medium_General.glb",
 	"Rig_Medium_MovementBasic.glb", "Rig_Medium_CombatMelee.glb",
+	"Rig_Medium_Special.glb",
 ]
 ## The skeleton's path in the pack files. The Adventurers name their rig
 ## node `Rig`; the skeletons keep the pack's own name, so theirs need no
@@ -54,6 +61,14 @@ const WALK_MAX_SPEED := 2.0
 ## hour of the day is not enough to cross the town.
 const MAX_ANIM_RATE := 2.4
 const ANIM_BLEND := 0.15  # seconds
+
+## Walking into somebody: a lunge of BUMP_REACH of a cell toward them and
+## back over BUMP_TIME, then BUMP_PAUSE before the next step is taken, so a
+## held key does not hammer.
+const BUMP_TIME := 0.24
+const BUMP_REACH := 0.3
+const BUMP_PAUSE := 0.12
+const BLOCK_PATIENCE := 1.0  # seconds a figure waits on a taken cell
 
 ## Sitting on a seat or lying on a bed: the figure steps onto it, goes down,
 ## idles there until asked to move, gets up and steps back to its cell.
@@ -87,7 +102,18 @@ var anim_idle := ANIM_IDLE
 var anim_walk := ANIM_WALK
 var anim_run := ANIM_RUN
 
+## The feet cell the figure stands on or is stepping into; in a seat or a
+## bed, the one beside it that it stepped on from and gets up onto again.
 var cell: Vector3i
+## Takes up its cell: nobody else steps into it. Off once it is dead.
+var solid := true
+## Walks into a taken cell and springs back (the player); otherwise the
+## figure waits for the cell to clear.
+var bumps := false
+## The feet cells beside a piece of furniture a figure could get up onto,
+## given a cell of the piece: for when somebody has taken the one it sat
+## down from. Unset, the figure waits for that one to clear.
+var stand_spots: Callable
 ## Multiplies SPEED: RUN_SCALE or WALK_SCALE, the player's by its walk key.
 var speed_scale := 1.0
 ## Called when the path runs out; may return the next feet cell or null.
@@ -112,9 +138,18 @@ var _phase_t := 0.0
 var _phase_len := 0.0
 var _rest_from := Vector3.ZERO
 var _rest_at := Vector3.ZERO
+var _rest_cell := Vector3i.ZERO  # a cell of the seat or bed in use
+var _leaving := Vector3i.ZERO    # the cell a step under way set off from
 ## A clip played once over the idle, and the seconds of it still to run.
 var _oneshot := ""
 var _oneshot_left := 0.0
+var _bump_dir := Vector3.ZERO
+var _bump_t := -1.0  # seconds into a bump, or below zero when there is none
+var _blocked_t := 0.0
+var _dead := false
+
+## Every figure in the tree, for who stands where.
+static var _all: Array[Figure] = []
 
 ## One reading of each model file, shared by every figure that wears it:
 ## the pack's characters are a few megabytes each. Kept as a scene that is
@@ -129,6 +164,50 @@ static var _loaded := {}  # path -> Node3D
 static var _pack := {}
 static var _pack_read := false
 static var _pack_for := {}  # skeleton path -> {clip name -> Animation}
+
+
+func _enter_tree() -> void:
+	_all.append(self)
+
+
+func _exit_tree() -> void:
+	_all.erase(self)
+
+
+## The figure other than `except` that holds feet cell `c`, or null.
+static func occupant(c: Vector3i, except: Figure = null) -> Figure:
+	for f in _all:
+		if f != except and f.holds(c):
+			return f
+	return null
+
+
+## The cells every figure but `except` holds, as a set for find_path.
+static func occupied_cells(except: Figure = null) -> Dictionary:
+	var out := {}
+	for f in _all:
+		if f != except and f.solid:
+			for c in f.held_cells():
+				out[c] = true
+	return out
+
+
+## The cells nobody else may step into: while walking, both the cell the
+## step left and the one it is going to, so a figure is caught on either
+## until it arrives; while seated or lying down, the piece it is on, not
+## the floor beside it.
+func held_cells() -> Array[Vector3i]:
+	if not solid:
+		return []
+	if _rest != Rest.NONE and (_phase == Phase.ON or _phase == Phase.DOWN or _phase == Phase.IDLE):
+		return [_rest_cell]
+	if _rest == Rest.NONE and _t < 1.0 and _leaving != cell:
+		return [cell, _leaving]
+	return [cell]
+
+
+func holds(c: Vector3i) -> bool:
+	return c in held_cells()
 
 
 func _ready() -> void:
@@ -291,6 +370,26 @@ func is_swinging() -> bool:
 	return _oneshot_left > 0.0
 
 
+func is_bumping() -> bool:
+	return _bump_t >= 0.0
+
+
+func is_dead() -> bool:
+	return _dead
+
+
+## Plays a clip once and holds its last frame for good: the figure takes
+## no more steps and gives up its cell.
+func die(anim_name: String) -> void:
+	_dead = true
+	solid = false
+	_path.clear()
+	_settle()
+	if _anim != null and _anim.has_animation(anim_name):
+		_anim.speed_scale = 1.0
+		_anim.play(anim_name, ANIM_BLEND)
+
+
 ## Walks or runs while the figure moves, whichever its pace calls for, and
 ## idles when it stops; the gait is sped up to keep pace with the ground.
 func _animate(moving: bool) -> void:
@@ -330,10 +429,13 @@ func is_resting() -> bool:
 
 ## Sits (seat: the middle of the seat's top) or lies down (seat: the middle
 ## of the mattress), facing `face`: away from a chair's back, toward the
-## foot of a bed. The figure keeps its cell, the one beside the piece, and
-## steps back to it when it next moves.
-func rest(kind: Rest, seat: Vector3, face: Vector3) -> void:
+## foot of a bed. `on` is a cell of the piece, which the figure holds while
+## it rests there. Its own cell stays the one beside the piece, and it
+## steps back to it when it next moves, or beside the piece elsewhere if
+## somebody has taken it meanwhile.
+func rest(kind: Rest, seat: Vector3, face: Vector3, on: Vector3i) -> void:
 	_rest = kind
+	_rest_cell = on
 	if kind == Rest.SIT:
 		_rest_at = seat + face * SIT_BACK * MODEL_SCALE - Vector3(0, SIT_HEIGHT * MODEL_SCALE, 0)
 	else:
@@ -379,7 +481,7 @@ func _process_rest(delta: float) -> void:
 			var asked := not _path.is_empty()
 			if not asked and step_provider.is_valid():
 				asked = step_provider.call() != null
-			if asked:
+			if asked and _get_up_cell():
 				_enter(Phase.UP)
 		Phase.UP:
 			if _phase_t >= _phase_len:
@@ -389,6 +491,30 @@ func _process_rest(delta: float) -> void:
 			if _phase_t >= REST_STEP_TIME:
 				_rest = Rest.NONE
 				_settle()
+
+
+## Makes sure there is a free cell to get up onto: its own, or failing
+## that the nearest free one beside the piece, which drops the path held
+## (it set off from the other) and says so with `blocked`. Returns false
+## when there is none, and the figure stays put.
+func _get_up_cell() -> bool:
+	if occupant(cell, self) == null:
+		return true
+	if not stand_spots.is_valid():
+		return false
+	var best: Variant = null
+	var best_d := INF
+	for c: Vector3i in stand_spots.call(_rest_cell):
+		var d := Vector3(c - cell).length_squared()
+		if occupant(c, self) == null and d < best_d:
+			best_d = d
+			best = c
+	if best == null:
+		return false
+	cell = best
+	_path.clear()
+	blocked.emit(null)
+	return true
 
 
 ## Stands on its cell, ready to walk whatever path it holds.
@@ -443,6 +569,7 @@ func pos_of(c: Vector3i) -> Vector3:
 func place(c: Vector3i) -> void:
 	cell = c
 	_rest = Rest.NONE
+	_bump_t = -1.0
 	_path.clear()
 	_settle()
 
@@ -456,18 +583,32 @@ func is_moving() -> bool:
 
 
 func _process(delta: float) -> void:
+	if _dead:
+		return
 	if _rest != Rest.NONE:
 		_process_rest(delta)
 		return
 	var remaining := delta
+	if _bump_t >= 0.0:
+		_process_bump(delta)
+		remaining = 0.0
 	while remaining > 0.0:
 		if _t >= 1.0:
+			# A swing is seen through before the next step: the player's
+			# attack would otherwise be cut off by the key still held.
+			if _oneshot_left > 0.0 and bumps:
+				break
 			if _path.is_empty() and step_provider.is_valid():
 				var n: Variant = step_provider.call()
 				if n != null:
 					_path.append(n)
 			if _path.is_empty():
 				break
+			var other := occupant(_path[0], self)
+			if other != null:
+				_meet(other, delta)
+				break
+			_blocked_t = 0.0
 			_begin_step(_path.pop_front())
 			if _path.is_empty():
 				last_step.emit()
@@ -482,7 +623,8 @@ func _process(delta: float) -> void:
 			position = _to
 			if _path.is_empty():
 				arrived.emit()
-	position = _from.lerp(_to, _t)
+	if _bump_t < 0.0:
+		position = _from.lerp(_to, _t)
 	if _t < 1.0:
 		_oneshot_left = 0.0
 	else:
@@ -491,7 +633,44 @@ func _process(delta: float) -> void:
 	_animate(_t < 1.0)
 
 
+## The next step is into `other`'s cell. A figure that bumps lunges at it
+## and gives up its path; any other waits, and after BLOCK_PATIENCE gives
+## the path up too.
+func _meet(other: Figure, delta: float) -> void:
+	var next: Vector3i = _path[0]
+	if bumps:
+		_path.clear()
+		bump(next, other)
+		return
+	_blocked_t += delta
+	if _blocked_t >= BLOCK_PATIENCE:
+		_blocked_t = 0.0
+		_path.clear()
+		blocked.emit(other)
+
+
+## Starts toward cell `c`, which `other` holds, springs back, and emits
+## `bumped`: also for a seat somebody sits in, which is no cell to step to.
+func bump(c: Vector3i, other: Figure) -> void:
+	_bump_dir = cell_center(c) - cell_center(cell)
+	_bump_dir.y = 0.0
+	_bump_dir = _bump_dir.normalized()
+	_bump_t = 0.0
+	face_point(cell_center(c))
+	bumped.emit(other)
+
+
+func _process_bump(delta: float) -> void:
+	_bump_t += delta
+	var k := clampf(_bump_t / BUMP_TIME, 0.0, 1.0)
+	position = pos_of(cell) + _bump_dir * BUMP_REACH * sin(PI * k)
+	if _bump_t >= BUMP_TIME + BUMP_PAUSE:
+		_bump_t = -1.0
+		position = pos_of(cell)
+
+
 func _begin_step(next: Vector3i) -> void:
+	_leaving = cell
 	_from = position
 	_to = pos_of(next)
 	cell = next

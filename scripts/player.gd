@@ -7,6 +7,10 @@ extends Figure
 const MODEL := "Knight.glb"
 const GEAR: Array[String] = ["1H_Sword", "Badge_Shield"]
 const XRAY_STENCIL := 1  # the figure's own pixels; shaders/xray.gdshader skips them
+## The knight's own sword swings, one picked at random for each attack.
+const ATTACKS: Array[String] = ["1H_Melee_Attack_Chop", "1H_Melee_Attack_Slice_Diagonal", "1H_Melee_Attack_Slice_Horizontal", "1H_Melee_Attack_Stab"]
+## Of an attack clip's length: when the blade lands and the blow counts.
+const ATTACK_LANDS := 0.4
 
 var _xray: ShaderMaterial
 
@@ -14,6 +18,7 @@ var _xray: ShaderMaterial
 func _ready() -> void:
 	model_file = MODEL
 	gear = GEAR
+	bumps = true
 	super()
 	_xray = ShaderMaterial.new()
 	_xray.shader = load("res://shaders/xray.gdshader")

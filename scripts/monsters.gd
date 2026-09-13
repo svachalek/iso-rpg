@@ -2,9 +2,11 @@ class_name Monsters
 extends Node3D
 
 ## Skeletons roaming the wilds outside the town wall and the caves under
-## the world, for now only to look at: each shambles about the spot it was put down on, stops, and swings
-## its weapon at the air, or at the player when the player is near enough
-## to be menaced. They are Figures like everyone else, on the same rig as
+## the world: each shambles about the spot it was put down on, stops, and
+## swings its weapon at the air, or at the player when the player is near
+## enough to be menaced. They do not fight back yet, but they can be hit:
+## each has MAX_HP, and one knocked to nothing falls apart and is taken
+## away after CORPSE_SECONDS. They are Figures like everyone else, on the same rig as
 ## the Character Animations pack, whose walk and melee clips they use.
 ##
 ## They are only ever about the player. One is put down now and then out
@@ -18,24 +20,28 @@ extends Node3D
 ## model off a hand bone; `idle` is the loop it stands in.
 const KINDS: Array[Dictionary] = [
 	{
+		"name": "skeleton warrior",
 		"model": "Skeleton_Warrior.glb",
 		"held": [["Skeleton_Axe.gltf", "handslot.r"], ["Skeleton_Shield_Large_A.gltf", "handslot.l"]],
 		"idle": "Idle_A",
 		"attacks": ["Melee_1H_Attack_Chop", "Melee_1H_Attack_Slice_Diagonal", "Melee_Block_Attack"],
 	},
 	{
+		"name": "skeleton minion",
 		"model": "Skeleton_Minion.glb",
 		"held": [["Skeleton_Blade.gltf", "handslot.r"]],
 		"idle": "Idle_A",
 		"attacks": ["Melee_1H_Attack_Slice_Horizontal", "Melee_1H_Attack_Stab", "Melee_1H_Attack_Chop"],
 	},
 	{
+		"name": "skeleton rogue",
 		"model": "Skeleton_Rogue.glb",
 		"held": [["Skeleton_Dagger.gltf", "handslot.r"], ["Skeleton_Dagger.gltf", "handslot.l"]],
 		"idle": "Idle_A",
 		"attacks": ["Melee_Dualwield_Attack_Chop", "Melee_Dualwield_Attack_Slice", "Melee_Dualwield_Attack_Stab"],
 	},
 	{
+		"name": "skeleton mage",
 		"model": "Skeleton_Mage.glb",
 		"held": [["Skeleton_Staff.gltf", "handslot.r"]],
 		"idle": "Melee_2H_Idle",
@@ -44,6 +50,11 @@ const KINDS: Array[Dictionary] = [
 ]
 const MODEL_DIR := "res://assets/kaykit_skeletons/"
 const WALK_ANIM := "Walking_A"
+const HIT_ANIM := "Hit_A"
+const DEATH_ANIM := "Skeletons_Death"
+
+const MAX_HP := 10
+const CORPSE_SECONDS := 6.0   # a heap of bones lies this long before it goes
 
 const MAX_MONSTERS := 10
 const SPAWN_GAP := 0.5        # seconds between goes at putting one down
@@ -85,6 +96,8 @@ class Monster:
 	var walking := false
 	var swings := 0           # swings left in the bout under way
 	var active := true
+	var hp := MAX_HP
+	var corpse_left := -1.0   # seconds until a dead one is taken away; below zero while it lives
 
 
 ## Tells whether a point is somewhere the cuts have taken away; see
@@ -132,7 +145,9 @@ func update(delta: float) -> void:
 		var seen := _on_screen(pos) and absf(pos.y - here.y) < LEVEL_REACH * 2.0
 		# Its column has gone with its chunk: nothing to stand on any more.
 		var grounded := not _finder.stand_cells(m.fig.cell.x, m.fig.cell.z).is_empty()
-		if not grounded or (not seen and dist > DESPAWN_RADIUS):
+		if m.corpse_left >= 0.0:
+			m.corpse_left -= delta
+		if not grounded or (not seen and dist > DESPAWN_RADIUS) or (m.corpse_left < 0.0 and m.fig.is_dead()):
 			m.fig.queue_free()
 			_monsters.remove_at(i)
 			_despawned += 1
@@ -146,6 +161,8 @@ func update(delta: float) -> void:
 		if not active:
 			continue
 		m.fig.visible = not (hidden_test.is_valid() and bool(hidden_test.call(pos + Vector3(0, 0.5, 0))))
+		if m.fig.is_dead():
+			continue
 		if _think(m, delta, dist, _plan_cool <= 0.0):
 			_plan_cool = PLAN_GAP
 	_spawn_cool -= delta
@@ -186,7 +203,7 @@ func _think(m: Monster, delta: float, dist: float, may_plan: bool) -> bool:
 		return false
 	var goal: Vector3i = g
 	var t0 := Time.get_ticks_usec()
-	var path := _finder.find_path(m.fig.cell, goal, PLAN_MARGIN)
+	var path := _finder.find_path(m.fig.cell, goal, PLAN_MARGIN, Figure.occupied_cells(m.fig))
 	_plans += 1
 	_plan_ms += float(Time.get_ticks_usec() - t0) / 1000.0
 	for c in path:
@@ -210,6 +227,8 @@ func _wander_goal(m: Monster) -> Variant:
 		return null
 	var c: Vector3i = s
 	if absf(_finder.feet_height(c) - m.fig.position.y) > LEVEL_REACH or c == m.fig.cell or _near_town(c, 2) or Vector3(_player.cell - c).length() < 2.0:
+		return null
+	if Figure.occupant(c, m.fig) != null:
 		return null
 	for o in _monsters:
 		if o != m and (Vector3(o.dest - c).length() < 2.0 or Vector3(o.fig.cell - c).length() < 2.0):
@@ -238,6 +257,8 @@ func _try_spawn() -> void:
 
 
 func _crowded(c: Vector3i) -> bool:
+	if Figure.occupant(c) != null:
+		return true
 	for o in _monsters:
 		if Vector3(o.fig.cell - c).length() < SPAWN_SPACING:
 			return true
@@ -288,6 +309,38 @@ func spawn_around(centre: Vector3i, count: int) -> void:
 		placed += 1
 
 
+func owns(fig: Figure) -> bool:
+	return fig.get_parent() == self
+
+
+## Takes `damage` off the monster that is `fig`, which flinches and turns
+## on whoever struck it from `from`, or falls apart at nothing left.
+## Returns [its name, the hit points left], or [] if it is no monster or
+## already dead.
+func hit(fig: Figure, damage: int, from: Vector3) -> Array:
+	var m := _monster(fig)
+	if m == null or m.fig.is_dead():
+		return []
+	m.hp = maxi(m.hp - damage, 0)
+	if m.hp == 0:
+		m.fig.die(DEATH_ANIM)
+		m.corpse_left = CORPSE_SECONDS
+	else:
+		m.fig.set_path([])
+		m.walking = false
+		m.swings = 0
+		m.fig.face_point(from)
+		m.wait = m.fig.play_once(HIT_ANIM) + _rng.randf_range(0.2, 0.6)
+	return [m.kind["name"], m.hp]
+
+
+func _monster(fig: Figure) -> Monster:
+	for m in _monsters:
+		if m.fig == fig:
+			return m
+	return null
+
+
 ## Whether a feet position shows on screen, give or take SCREEN_MARGIN.
 func _on_screen(feet: Vector3) -> bool:
 	var rect := get_viewport().get_visible_rect()
@@ -319,8 +372,8 @@ func summary() -> String:
 func report() -> String:
 	var lines: Array[String] = []
 	for m in _monsters:
-		var state := "walking" if m.walking else ("swinging" if m.fig.is_swinging() else "standing")
-		lines.append("  %-16s home %s at %s %s%s" % [
-			m.fig.model_file.trim_suffix(".glb"), m.home, m.fig.cell, state, "" if m.active else " (frozen)"])
+		var state := "dead" if m.fig.is_dead() else ("walking" if m.walking else ("swinging" if m.fig.is_swinging() else "standing"))
+		lines.append("  %-16s home %s at %s %s, %d hp%s" % [
+			m.fig.model_file.trim_suffix(".glb"), m.home, m.fig.cell, state, m.hp, "" if m.active else " (frozen)"])
 	lines.append("  " + summary())
 	return "monsters:\n" + "\n".join(lines)

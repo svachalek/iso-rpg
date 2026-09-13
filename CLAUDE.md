@@ -127,6 +127,19 @@ cannot use `call()`.
   piece of furniture and onto open ground otherwise. `TownBuilder.Home`
   records each house's pieces as they are placed, which is who gets which
   bed. `--folk --time=HH:MM --daylen=0` reports where everyone ends up.
+- What a figure holds is `Figure.held_cells`: `cell`, and while a step is
+  under way the cell it left too; in a seat or bed, only a cell of the piece
+  (`rest`'s `on`, the anchor), while `cell` stays the floor beside it that
+  paths start from. Getting up onto a `cell` someone has taken moves `cell`
+  to a free `stand_spots` cell and drops the path with `blocked`.
+  `Figure.occupant` is the one test. The check is made in
+  `Figure._process` as each step begins, so a path planned through
+  somebody is safe but waits; plan with `Figure.occupied_cells` to go
+  around. `place` ignores it, so anything that puts a figure down in view
+  must pick a free cell itself. Only a figure with `bumps` (the player)
+  springs back and emits `bumped`; the rest emit `blocked` after waiting.
+  Check changes with `--fight`, `--greet` or `--walk=seat --getup`, and
+  `--selftest`.
 - Sitting and lying: a piece says where the figure goes on it with `sit` or
   `lie` in `FURNITURE_SPECS`, in cubes from the anchor cell's centre before
   rotation (the model's own measurements, at `FURNITURE_SCALE`); the figure
