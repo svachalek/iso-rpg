@@ -59,6 +59,25 @@ same scale; there is no zoom-in view.
   shifted a few minutes off their neighbours'. Anyone standing on a floor
   the slice or the occluder cut has taken away is not drawn: those cuts
   are the shader's doing and never touched these figures
+- Monsters (scripts/monsters.gd), only to look at so far: skeletons from
+  the CC0 KayKit Skeletons pack (assets/kaykit_skeletons), a warrior with
+  axe and shield, a minion with a blade, a rogue with two daggers and a
+  mage with a staff. The models carry no clips of their own but are on the
+  animation pack's rig, so they walk and swing with its movement and melee
+  clips; their weapons are separate models hung off the hand bones. Each
+  shambles about the spot it was put down on, and between walks stands
+  and swings a bout of attacks at the air, turning on the player when the
+  player comes within a dozen cells. They exist only about the player: one
+  at a time is put down out of sight, in a ring 26 to 40 cells out on the
+  player's own level, up to ten: out in the open well clear of the town
+  wall, or on the cave floors and tunnel steps when the player is
+  underground, where the caves under the town count too. One only moves while it is on screen
+  or within 20 cells, counting the depth between them, so one on another
+  level is out of mind; otherwise it stands frozen, animation and all, and
+  once it is out of sight and more than 48 cells off it is taken away. Their
+  walks are six cells or so, planned one at a time and a few a second at
+  most, and their models are read at startup so none stalls a frame by
+  turning up
 - The ground surface is a heightfield on the grid vertices: each vertex is
   the mean of the continuous terrain height of the four columns around it,
   snapped to quarter cubes. Every column reads its four corners from that
@@ -317,6 +336,10 @@ Optional user args go after `--`:
     --daylen=SECONDS      seconds in a day (default 300); 0 holds the clock
     --walk=cave           walk down that cave's tunnel to its landing
     --folk                wait for the townsfolk to settle, say where they all are, quit
+    --monsters            put one monster of each kind down around the player, let them go
+                          for --frames=N frames (default 300), say what they are doing, quit;
+                          with --screenshot, saves the last frame at --zoom and --yaw
+    --nomonsters          put no monsters down (the galleries have none either)
     --hitch               print a line whenever a frame takes more than 50 ms
     --noshadows           no sun shadows, to tell shadow trouble from the rest
     --walk=seat           walk to the nearest chair or stool and sit on it

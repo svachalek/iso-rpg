@@ -81,6 +81,18 @@ cannot use `call()`.
   ignored by git and Godot); to add a model, copy its `.gltf` and `.bin`
   from `Assets/gltf/ColorN` and name it in `Nature` or `PROP_SPECS`.
   Colours 1 to 3 are greens, 4 teal, 5 and 6 autumn, 7 red, 8 pink.
+  `assets/kaykit_skeletons` is the same again for the monsters, out of
+  `assets/KayKit_Skeletons_1.1_EXTRA`: characters as `.glb`, weapons as
+  `.gltf` with their `.bin` and the shared texture. The skeletons have no
+  clips and no AnimationPlayer; `Figure` makes one and gives them the
+  pack's clips under the pack's own `Rig_Medium/Skeleton3D` path, where the
+  Adventurers get copies renamed to `Rig/Skeleton3D`. The pack's idle is
+  `Idle_A`, not `Idle`, so a figure on pack clips alone sets `anim_idle`.
+  The Golem is on `Rig_Large`, which the animation pack's clips do not fit.
+  Never call `generate_scene` twice on one `GLTFState`: the second scene's
+  bones come out renamed (`hips_2`), the pack's clips move nothing and the
+  figure stands in its T-pose. `Figure.read_model` keeps one generated
+  scene per file and each figure gets a `duplicate()` of it.
   `assets/kaykit_dungeon` is the same arrangement for the furniture, out of
   `assets/KayKit_Dungeon_Pack_1.1_EXTRA`; name the model
   in `FURNITURE_SPECS` and it loads as `.gltf`. It was the 2023 Dungeon

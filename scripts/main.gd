@@ -46,6 +46,7 @@ var _covered := false
 var _sun: DirectionalLight3D
 var _env: Environment
 var folk: Townsfolk
+var monsters: Monsters
 var _torch: OmniLight3D
 var _rest_on_arrival: Variant = null  # feet cell of the seat or bed to use when the walk ends
 ## The clock everything in the world keeps: a fraction of a day. Starts in
@@ -224,9 +225,23 @@ func _ready() -> void:
 	rig.target = player
 	rig.snap_to_target()
 
+	monsters = Monsters.new()
+	monsters.name = "Monsters"
+	add_child(monsters)
+	monsters.hidden_test = _is_hidden_point
+	monsters.setup(finder, player, rig.camera, town)
+	# None in the galleries, nor when asked for a view without them.
+	for a: String in ["--nomonsters", "--furniture", "--nature", "--shapes"]:
+		if a in OS.get_cmdline_user_args():
+			monsters.enabled = false
+
 	_setup_marker()
 	_setup_hud()
 	_maybe_run_selftest()
+
+
+func _exit_tree() -> void:
+	Figure.free_models()
 
 
 func _setup_environment() -> void:
@@ -433,6 +448,7 @@ func _process(delta: float) -> void:
 	_advance_day(delta)
 	chunks.update_center(player.global_position)
 	folk.update(time_of_day)
+	monsters.update(delta)
 	_covered = _is_covered()
 	_update_occlusion(delta)
 	_update_shader_globals()
@@ -838,10 +854,14 @@ func _maybe_run_selftest() -> void:
 		elif a == "--selftest":
 			selftest = true
 	var folk_report := "--folk" in OS.get_cmdline_user_args()
-	if shot.is_empty() and not selftest and not folk_report:
+	var monster_report := "--monsters" in OS.get_cmdline_user_args()
+	if shot.is_empty() and not selftest and not folk_report and not monster_report:
 		return
 	if folk_report:
 		_report_folk(shot)
+		return
+	if monster_report:
+		_report_monsters(shot)
 		return
 	_run_selftest(shot)
 
@@ -853,6 +873,33 @@ func _report_folk(shot: String) -> void:
 	for i in 240:
 		await get_tree().process_frame
 	print(folk.report())
+	if not shot.is_empty():
+		await RenderingServer.frame_post_draw
+		get_viewport().get_texture().get_image().save_png(shot)
+	get_tree().quit()
+
+
+## `--monsters` puts a few monsters down around the player, in view, lets
+## them go about for a while, says what they are all doing, and quits;
+## with `--screenshot` it saves the last frame, at `--zoom` and `--yaw`.
+func _report_monsters(shot: String) -> void:
+	DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_DISABLED)
+	player.step_provider = Callable()
+	var frames := 300
+	var yaw := 45.0
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--frames="):
+			frames = int(a.trim_prefix("--frames="))
+		elif a.begins_with("--yaw="):
+			yaw = float(a.trim_prefix("--yaw="))
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--zoom="):
+			rig.snap(yaw, float(a.trim_prefix("--zoom=")))
+			rig.snap_to_target()
+	monsters.spawn_around(player.cell, Monsters.KINDS.size())
+	for i in frames:
+		await get_tree().process_frame
+	print(monsters.report())
 	if not shot.is_empty():
 		await RenderingServer.frame_post_draw
 		get_viewport().get_texture().get_image().save_png(shot)
@@ -1056,6 +1103,7 @@ func _run_selftest(shot: String) -> void:
 				await get_tree().create_timer(5.0).timeout
 				print("selftest: resting %s" % player.is_resting())
 			print("selftest: at %s feet %.1f" % [player.cell, player.position.y])
+			print("selftest: monsters ", monsters.summary())
 			if walks > 0:
 				continue  # more legs to walk; screenshot after the last
 			var yaw := 45.0
@@ -1116,6 +1164,7 @@ func _run_selftest(shot: String) -> void:
 		frames += 1
 	print("selftest: walked %d frames, now at %s, chunks %d, %d fps uncapped" % [
 		frames, player.cell, chunks.loaded_count(), Engine.get_frames_per_second()])
+	print("selftest: monsters ", monsters.summary())
 	if in_town and shot.is_empty():
 		# Then up the first house's stair, which catches a stair the
 		# pathfinder cannot climb.
