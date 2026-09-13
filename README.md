@@ -74,7 +74,11 @@ same scale; there is no zoom-in view.
   step into a taken cell: they plan around whoever stands in the way,
   wait for them otherwise, and after a second give the walk up and plan
   it again
-- Monsters (scripts/monsters.gd), which can be hit but do not fight back yet: skeletons from
+- The player has 50 hit points, shown in a bar at the bottom left. A blow
+  takes its damage off with a number rising from the knight, who flinches
+  if only standing; at none the knight falls, and a few seconds later wakes
+  at the town gate whole again
+- Monsters (scripts/monsters.gd), which fight: skeletons from
   the CC0 KayKit Skeletons pack (assets/kaykit_skeletons), a warrior with
   axe and shield, a minion with a blade, a rogue with two daggers and a
   mage with a staff. The models carry no clips of their own but are on the
@@ -92,7 +96,17 @@ same scale; there is no zoom-in view.
   once it is out of sight and more than 48 cells off it is taken away.
   Each has 10 hit points; a hit makes it flinch and turn on the player,
   and one knocked to nothing collapses into a heap of bones that lies
-  there a few seconds before it goes. Their
+  there a few seconds before it goes. One the player comes within a dozen
+  cells of, on its own level, locks on and walks at the pace of the
+  townsfolk rather than its shamble, letting go past eighteen cells or
+  when the player dies. The warrior, minion and rogue make for the nearest
+  free cell beside the player and swing for 2d6, which misses if the
+  player has stepped away by the time the blow lands; the mage makes for a
+  cell four out (counted along the longer axis, as steps are), backs away
+  to it when the player closes in, casts only from there unless it finds
+  no way back, and sends a glowing bolt for 1d8 that follows the player
+  home. Bolts pass through walls for now. A blow taken spoils the one a
+  skeleton was making. They never plan a way into the town. Their
   walks are six cells or so, planned one at a time and a few a second at
   most, and their models are read at startup so none stalls a frame by
   turning up
@@ -356,7 +370,9 @@ Optional user args go after `--`:
     --folk                wait for the townsfolk to settle, say where they all are, quit
     --monsters            put one monster of each kind down around the player, let them go
                           for --frames=N frames (default 300), say what they are doing, quit;
-                          with --screenshot, saves the last frame at --zoom and --yaw
+                          with --screenshot, saves the last frame at --zoom and --yaw;
+                          they fight, so the report ends with the player's hit points
+    --chase               with --monsters: halfway through, go after the mage and log its distance
     --nomonsters          put no monsters down (the galleries have none either)
     --hitch               print a line whenever a frame takes more than 50 ms
     --noshadows           no sun shadows, to tell shadow trouble from the rest

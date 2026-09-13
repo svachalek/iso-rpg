@@ -11,6 +11,11 @@ const XRAY_STENCIL := 1  # the figure's own pixels; shaders/xray.gdshader skips 
 const ATTACKS: Array[String] = ["1H_Melee_Attack_Chop", "1H_Melee_Attack_Slice_Diagonal", "1H_Melee_Attack_Slice_Horizontal", "1H_Melee_Attack_Stab"]
 ## Of an attack clip's length: when the blade lands and the blow counts.
 const ATTACK_LANDS := 0.4
+const MAX_HP := 50
+const HIT_ANIM := "Hit_A"
+const DEATH_ANIM := "Death_A"
+
+var hp := MAX_HP
 
 var _xray: ShaderMaterial
 

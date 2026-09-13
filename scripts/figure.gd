@@ -33,7 +33,7 @@ const PACK_DIR := "res://assets/kaykit_animations/"
 const PACK_FILES: Array[String] = [
 	"Rig_Medium_Tools.glb", "Rig_Medium_General.glb",
 	"Rig_Medium_MovementBasic.glb", "Rig_Medium_CombatMelee.glb",
-	"Rig_Medium_Special.glb",
+	"Rig_Medium_Special.glb", "Rig_Medium_CombatRanged.glb",
 ]
 ## The skeleton's path in the pack files. The Adventurers name their rig
 ## node `Rig`; the skeletons keep the pack's own name, so theirs need no
@@ -143,6 +143,7 @@ var _leaving := Vector3i.ZERO    # the cell a step under way set off from
 ## A clip played once over the idle, and the seconds of it still to run.
 var _oneshot := ""
 var _oneshot_left := 0.0
+var _oneshot_holds := false
 var _bump_dir := Vector3.ZERO
 var _bump_t := -1.0  # seconds into a bump, or below zero when there is none
 var _blocked_t := 0.0
@@ -354,12 +355,14 @@ func face_point(p: Vector3) -> void:
 
 
 ## Plays a clip once while the figure stands, then goes back to its idle;
-## walking off cuts it short. Returns its length, or 0 if there is no such
-## clip.
-func play_once(anim_name: String) -> float:
+## walking off cuts it short, unless `hold`, which keeps the figure from
+## stepping until it is done (an attack seen through). Returns its length,
+## or 0 if there is no such clip.
+func play_once(anim_name: String, hold := false) -> float:
 	if _anim == null or not _anim.has_animation(anim_name):
 		return 0.0
 	_oneshot = anim_name
+	_oneshot_holds = hold
 	_oneshot_left = _anim.get_animation(anim_name).length
 	_anim.play(anim_name, ANIM_BLEND)
 	_anim.seek(0.0, true)
@@ -376,6 +379,15 @@ func is_bumping() -> bool:
 
 func is_dead() -> bool:
 	return _dead
+
+
+## Stands a dead figure back up, idle, holding its cell again.
+func revive() -> void:
+	_dead = false
+	solid = true
+	_oneshot_left = 0.0
+	if _anim != null:
+		_anim.play(anim_idle)
 
 
 ## Plays a clip once and holds its last frame for good: the figure takes
@@ -596,7 +608,7 @@ func _process(delta: float) -> void:
 		if _t >= 1.0:
 			# A swing is seen through before the next step: the player's
 			# attack would otherwise be cut off by the key still held.
-			if _oneshot_left > 0.0 and bumps:
+			if _oneshot_left > 0.0 and _oneshot_holds:
 				break
 			if _path.is_empty() and step_provider.is_valid():
 				var n: Variant = step_provider.call()

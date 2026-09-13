@@ -4,9 +4,14 @@ extends Node3D
 ## Skeletons roaming the wilds outside the town wall and the caves under
 ## the world: each shambles about the spot it was put down on, stops, and
 ## swings its weapon at the air, or at the player when the player is near
-## enough to be menaced. They do not fight back yet, but they can be hit:
-## each has MAX_HP, and one knocked to nothing falls apart and is taken
-## away after CORPSE_SECONDS. They are Figures like everyone else, on the same rig as
+## enough to be menaced. Each has MAX_HP, and one knocked to nothing falls
+## apart and is taken away after CORPSE_SECONDS.
+##
+## One the player comes within LOCK_RADIUS of locks on and fights: a melee
+## kind makes for a cell beside the player and swings, a ranged one for a
+## cell at the edge of its range and casts a bolt from there, backing off
+## when the player closes in. It lets go once the player is UNLOCK_RADIUS
+## off, or dead. They are Figures like everyone else, on the same rig as
 ## the Character Animations pack, whose walk and melee clips they use.
 ##
 ## They are only ever about the player. One is put down now and then out
@@ -25,6 +30,7 @@ const KINDS: Array[Dictionary] = [
 		"held": [["Skeleton_Axe.gltf", "handslot.r"], ["Skeleton_Shield_Large_A.gltf", "handslot.l"]],
 		"idle": "Idle_A",
 		"attacks": ["Melee_1H_Attack_Chop", "Melee_1H_Attack_Slice_Diagonal", "Melee_Block_Attack"],
+		"range": 1, "dice": [2, 6],
 	},
 	{
 		"name": "skeleton minion",
@@ -32,6 +38,7 @@ const KINDS: Array[Dictionary] = [
 		"held": [["Skeleton_Blade.gltf", "handslot.r"]],
 		"idle": "Idle_A",
 		"attacks": ["Melee_1H_Attack_Slice_Horizontal", "Melee_1H_Attack_Stab", "Melee_1H_Attack_Chop"],
+		"range": 1, "dice": [2, 6],
 	},
 	{
 		"name": "skeleton rogue",
@@ -39,6 +46,7 @@ const KINDS: Array[Dictionary] = [
 		"held": [["Skeleton_Dagger.gltf", "handslot.r"], ["Skeleton_Dagger.gltf", "handslot.l"]],
 		"idle": "Idle_A",
 		"attacks": ["Melee_Dualwield_Attack_Chop", "Melee_Dualwield_Attack_Slice", "Melee_Dualwield_Attack_Stab"],
+		"range": 1, "dice": [2, 6],
 	},
 	{
 		"name": "skeleton mage",
@@ -46,6 +54,9 @@ const KINDS: Array[Dictionary] = [
 		"held": [["Skeleton_Staff.gltf", "handslot.r"]],
 		"idle": "Melee_2H_Idle",
 		"attacks": ["Melee_2H_Attack_Chop", "Melee_2H_Attack_Slice", "Melee_2H_Attack_Spin"],
+		# At the player it casts rather than swings: `range` above 1 is a
+		# bolt, flown from the staff.
+		"range": 4, "dice": [1, 8], "cast": "Ranged_Magic_Shoot",
 	},
 ]
 const MODEL_DIR := "res://assets/kaykit_skeletons/"
@@ -55,6 +66,19 @@ const DEATH_ANIM := "Skeletons_Death"
 
 const MAX_HP := 10
 const CORPSE_SECONDS := 6.0   # a heap of bones lies this long before it goes
+
+const LOCK_RADIUS := 12.0     # cells within which one turns on the player
+const UNLOCK_RADIUS := 18.0   # and beyond which it gives up
+const CHASE_SCALE := 0.5      # of Figure.SPEED while it fights: the fastest it still walks
+const REPLAN_SECONDS := 0.6   # a fighter's way to the player is planned again this often
+## Of an attack clip's length: when the blow lands or the bolt leaves.
+const STRIKE_AT := 0.45
+const CAST_AT := 0.35
+const ATTACK_REST := Vector2(0.5, 1.1)  # seconds between one attack's end and the next
+## Cubes up or down within which a swing reaches the cell beside it.
+const MELEE_REACH_Y := 1.2
+const BOLT_SPEED := 9.0       # world units a second
+const BOLT_COLOR := Color(0.62, 0.35, 1.0)
 
 const MAX_MONSTERS := 10
 const SPAWN_GAP := 0.5        # seconds between goes at putting one down
@@ -97,13 +121,32 @@ class Monster:
 	var swings := 0           # swings left in the bout under way
 	var active := true
 	var hp := MAX_HP
+	var locked := false       # fighting the player
+	var cooldown := 0.0       # seconds before it may attack again
+	var strike_left := -1.0   # seconds until the attack under way lands; below zero with none
+	var replan := 0.0         # seconds before its way to the player is planned again
+	var stuck := false        # the last plan to get into position found no way
 	var corpse_left := -1.0   # seconds until a dead one is taken away; below zero while it lives
+
+
+## A spell on its way to the player: it follows them, so it only misses if
+## the player dies first.
+class Bolt:
+	var node: Node3D
+	var damage: int
+	var by: String
 
 
 ## Tells whether a point is somewhere the cuts have taken away; see
 ## Townsfolk.hidden_test.
 var hidden_test: Callable
 var enabled := true
+## Called as (damage, attacker's name, where the blow came from) when a
+## blow or a bolt reaches the player.
+var hurt_player: Callable
+
+var _bolts: Array[Bolt] = []
+var _bolt_mesh: SphereMesh
 
 var _monsters: Array[Monster] = []
 var _finder: GridPathfinder
@@ -125,6 +168,13 @@ func setup(finder: GridPathfinder, player: Figure, camera: Camera3D, town: TownB
 	_camera = camera
 	_town = town
 	_rng.seed = 7
+	_bolt_mesh = SphereMesh.new()
+	_bolt_mesh.radius = 0.13
+	_bolt_mesh.height = 0.26
+	var mat := StandardMaterial3D.new()
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.albedo_color = BOLT_COLOR.lightened(0.4)
+	_bolt_mesh.material = mat
 	# Read now rather than when the first of each kind is put down, which
 	# stalls that frame.
 	for kind in KINDS:
@@ -163,12 +213,185 @@ func update(delta: float) -> void:
 		m.fig.visible = not (hidden_test.is_valid() and bool(hidden_test.call(pos + Vector3(0, 0.5, 0))))
 		if m.fig.is_dead():
 			continue
-		if _think(m, delta, dist, _plan_cool <= 0.0):
+		_update_lock(m, dist)
+		var planned := _fight(m, delta, _plan_cool <= 0.0) if m.locked else _think(m, delta, dist, _plan_cool <= 0.0)
+		if planned:
 			_plan_cool = PLAN_GAP
+	_update_bolts(delta)
 	_spawn_cool -= delta
 	if enabled and _spawn_cool <= 0.0 and _monsters.size() < MAX_MONSTERS:
 		_spawn_cool = SPAWN_GAP
 		_try_spawn()
+
+
+## Locks on to a player come near enough on its own level, and lets go of
+## one gone far off or dead.
+func _update_lock(m: Monster, dist: float) -> void:
+	var near := absf(m.fig.position.y - _player.position.y) < LEVEL_REACH and dist < (UNLOCK_RADIUS if m.locked else LOCK_RADIUS)
+	var want := near and not _player.is_dead()
+	if want == m.locked:
+		return
+	m.locked = want
+	m.fig.speed_scale = CHASE_SCALE if want else SPEED_SCALE
+	m.swings = 0
+	m.stuck = false
+	m.replan = 0.0
+	m.walking = m.fig.is_moving()
+	m.wait = _rng.randf_range(0.3, 1.0)
+	m.dest = m.fig.cell
+
+
+## A fighting monster's turn: see an attack under way through, attack when
+## in position and rested, otherwise get into position. Returns whether it
+## planned a path.
+func _fight(m: Monster, delta: float, may_plan: bool) -> bool:
+	m.cooldown -= delta
+	m.replan -= delta
+	if m.strike_left >= 0.0:
+		m.strike_left -= delta
+		if m.strike_left < 0.0:
+			_strike(m)
+		return false
+	if m.fig.is_swinging():
+		return false  # flinching, or the end of its own swing
+	var reach: int = m.kind["range"]
+	var d := _cells_to_player(m.fig.cell)
+	var in_range := d >= 1 and d <= reach and _level_ok(m, reach)
+	# Melee closes to the cell beside; a caster keeps to the edge of its
+	# range, and casts from nearer only when it finds no way back.
+	var placed := d == reach and _level_ok(m, reach)
+	if not m.fig.is_moving():
+		m.fig.face_point(_player.global_position)
+		if in_range and m.cooldown <= 0.0 and (placed or m.stuck):
+			_start_attack(m)
+			return false
+	if placed:
+		if m.fig.is_moving():
+			m.fig.set_path([])  # the step under way finishes, then it stops
+		return false
+	if not may_plan or (m.fig.is_moving() and m.replan > 0.0) or (m.stuck and m.replan > 0.0):
+		return false
+	m.replan = REPLAN_SECONDS
+	var path: Array[Vector3i] = []
+	var g: Variant = _fight_goal(m, reach)
+	if g != null:
+		var goal: Vector3i = g
+		var t0 := Time.get_ticks_usec()
+		path = _finder.find_path(m.fig.cell, goal, PLAN_MARGIN, Figure.occupied_cells(m.fig))
+		_plans += 1
+		_plan_ms += float(Time.get_ticks_usec() - t0) / 1000.0
+		for c in path:
+			if _near_town(c, 2):
+				path = []  # the town is no place for it
+				break
+		m.dest = goal
+	m.stuck = path.is_empty()
+	m.fig.set_path(path)
+	return true
+
+
+## The free cell `reach` cells from the player (by the longer axis, the way
+## a step counts) nearest the monster, on the player's level; null if none.
+func _fight_goal(m: Monster, reach: int) -> Variant:
+	var at := _player.cell
+	var best: Variant = null
+	var best_d := INF
+	for dz in range(-reach, reach + 1):
+		for dx in range(-reach, reach + 1):
+			if maxi(absi(dx), absi(dz)) != reach:
+				continue
+			var s: Variant = _finder.stand_cell_near(at.x + dx, at.z + dz, _player.position.y)
+			if s == null:
+				continue
+			var c: Vector3i = s
+			var dy := absf(_finder.feet_height(c) - _player.position.y)
+			if dy > (MELEE_REACH_Y if reach == 1 else LEVEL_REACH) or _near_town(c, 2):
+				continue
+			if Figure.occupant(c, m.fig) != null:
+				continue
+			var taken := false
+			for o in _monsters:
+				if o != m and o.locked and o.dest == c:
+					taken = true
+			if taken:
+				continue
+			var d := Vector3(c - m.fig.cell).length_squared()
+			if d < best_d:
+				best_d = d
+				best = c
+	return best
+
+
+## Cells from `c` to the nearest cell the player holds, by the longer axis.
+func _cells_to_player(c: Vector3i) -> int:
+	var best := 1 << 20
+	for h in _player.held_cells():
+		best = mini(best, maxi(absi(h.x - c.x), absi(h.z - c.z)))
+	return best
+
+
+func _level_ok(m: Monster, reach: int) -> bool:
+	return absf(m.fig.position.y - _player.position.y) <= (MELEE_REACH_Y if reach == 1 else LEVEL_REACH)
+
+
+func _start_attack(m: Monster) -> void:
+	var clip: String
+	var at := STRIKE_AT
+	if m.kind.has("cast"):
+		clip = m.kind["cast"]
+		at = CAST_AT
+	else:
+		var attacks: Array = m.kind["attacks"]
+		clip = attacks[_rng.randi() % attacks.size()]
+	var length := m.fig.play_once(clip)
+	m.strike_left = length * at
+	m.cooldown = length + _rng.randf_range(ATTACK_REST.x, ATTACK_REST.y)
+
+
+## The moment an attack lands: a swing hits if the player is still beside
+## it, a cast lets a bolt go whatever.
+func _strike(m: Monster) -> void:
+	if _player.is_dead():
+		return
+	var dice: Array = m.kind["dice"]
+	var damage := 0
+	for i in int(dice[0]):
+		damage += _rng.randi_range(1, int(dice[1]))
+	var reach: int = m.kind["range"]
+	if reach > 1:
+		var b := Bolt.new()
+		b.damage = damage
+		b.by = m.kind["name"]
+		var mi := MeshInstance3D.new()
+		mi.mesh = _bolt_mesh
+		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		var glow := OmniLight3D.new()
+		glow.light_color = BOLT_COLOR
+		glow.omni_range = 2.5
+		glow.light_energy = 1.5
+		mi.add_child(glow)
+		add_child(mi)
+		var fwd := (_player.global_position - m.fig.global_position) * Vector3(1, 0, 1)
+		mi.global_position = m.fig.global_position + Vector3(0, 1.3, 0) + fwd.normalized() * 0.5
+		b.node = mi
+		_bolts.append(b)
+	elif _cells_to_player(m.fig.cell) <= 1 and _level_ok(m, reach):
+		hurt_player.call(damage, m.kind["name"], m.fig.global_position)
+
+
+func _update_bolts(delta: float) -> void:
+	var target := _player.global_position + Vector3(0, 1.0, 0)
+	for i in range(_bolts.size() - 1, -1, -1):
+		var b := _bolts[i]
+		var to := target - b.node.global_position
+		var step := BOLT_SPEED * delta
+		if _player.is_dead() or to.length() <= step:
+			if not _player.is_dead():
+				hurt_player.call(b.damage, b.by, b.node.global_position)
+			b.node.queue_free()
+			_bolts.remove_at(i)
+			continue
+		b.node.global_position += to.normalized() * step
 
 
 ## One monster's turn: finish a walk, wait, then swing or wander off.
@@ -322,6 +545,7 @@ func hit(fig: Figure, damage: int, from: Vector3) -> Array:
 	if m == null or m.fig.is_dead():
 		return []
 	m.hp = maxi(m.hp - damage, 0)
+	m.strike_left = -1.0  # a blow taken spoils the one it was making
 	if m.hp == 0:
 		m.fig.die(DEATH_ANIM)
 		m.corpse_left = CORPSE_SECONDS
@@ -331,6 +555,7 @@ func hit(fig: Figure, damage: int, from: Vector3) -> Array:
 		m.swings = 0
 		m.fig.face_point(from)
 		m.wait = m.fig.play_once(HIT_ANIM) + _rng.randf_range(0.2, 0.6)
+		m.cooldown = maxf(m.cooldown, 0.3)
 	return [m.kind["name"], m.hp]
 
 
@@ -372,7 +597,9 @@ func summary() -> String:
 func report() -> String:
 	var lines: Array[String] = []
 	for m in _monsters:
-		var state := "dead" if m.fig.is_dead() else ("walking" if m.walking else ("swinging" if m.fig.is_swinging() else "standing"))
+		var state := "dead" if m.fig.is_dead() else ("walking" if m.fig.is_moving() else ("swinging" if m.fig.is_swinging() else "standing"))
+		if m.locked and not m.fig.is_dead():
+			state = "fighting, %d cells off, %s" % [_cells_to_player(m.fig.cell), state]
 		lines.append("  %-16s home %s at %s %s, %d hp%s" % [
 			m.fig.model_file.trim_suffix(".glb"), m.home, m.fig.cell, state, m.hp, "" if m.active else " (frozen)"])
 	lines.append("  " + summary())

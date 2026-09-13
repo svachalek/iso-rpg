@@ -15,6 +15,10 @@ const MARKER_RADIUS := 0.4
 const MARKER_FOOT := -0.4
 const MARKER_TOP := 3.0
 var hud: Label
+var _hp_bar: ProgressBar
+var _hp_fill: StyleBoxFlat
+var _hp_label: Label
+const RESPAWN_SECONDS := 4.0
 
 var _click_pending := false
 var _click_pos := Vector2.ZERO
@@ -233,6 +237,7 @@ func _ready() -> void:
 	add_child(monsters)
 	monsters.hidden_test = _is_hidden_point
 	monsters.setup(finder, player, rig.camera, town)
+	monsters.hurt_player = _hurt_player
 	# None in the galleries, nor when asked for a view without them.
 	for a: String in ["--nomonsters", "--furniture", "--nature", "--shapes"]:
 		if a in OS.get_cmdline_user_args():
@@ -435,6 +440,81 @@ func _setup_hud() -> void:
 	hud.add_theme_color_override("font_outline_color", Color.BLACK)
 	hud.add_theme_constant_override("outline_size", 4)
 	layer.add_child(hud)
+	# The player's hit points, bottom left.
+	_hp_bar = ProgressBar.new()
+	_hp_bar.show_percentage = false
+	_hp_bar.max_value = Player.MAX_HP
+	_hp_bar.custom_minimum_size = Vector2(240, 22)
+	_hp_bar.anchor_top = 1.0
+	_hp_bar.anchor_bottom = 1.0
+	_hp_bar.offset_left = 12
+	_hp_bar.offset_right = 252
+	_hp_bar.offset_top = -34
+	_hp_bar.offset_bottom = -12
+	var back := StyleBoxFlat.new()
+	back.bg_color = Color(0.08, 0.06, 0.06, 0.8)
+	back.border_color = Color(0, 0, 0)
+	back.set_border_width_all(2)
+	back.set_corner_radius_all(4)
+	_hp_fill = StyleBoxFlat.new()
+	_hp_fill.set_corner_radius_all(3)
+	_hp_bar.add_theme_stylebox_override("background", back)
+	_hp_bar.add_theme_stylebox_override("fill", _hp_fill)
+	layer.add_child(_hp_bar)
+	_hp_label = Label.new()
+	_hp_label.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_hp_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_hp_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_hp_label.add_theme_font_size_override("font_size", 14)
+	_hp_label.add_theme_color_override("font_outline_color", Color.BLACK)
+	_hp_label.add_theme_constant_override("outline_size", 4)
+	_hp_bar.add_child(_hp_label)
+	_update_hp_bar()
+
+
+func _update_hp_bar() -> void:
+	_hp_bar.value = player.hp
+	var k := float(player.hp) / Player.MAX_HP
+	# Green when whole, through yellow, to red near the end.
+	_hp_fill.bg_color = Color(0.85, 0.2, 0.15).lerp(Color(0.9, 0.75, 0.2), clampf(k * 2.0, 0.0, 1.0)).lerp(Color(0.3, 0.75, 0.3), clampf(k * 2.0 - 1.0, 0.0, 1.0))
+	_hp_label.text = "HP %d / %d" % [player.hp, Player.MAX_HP]
+
+
+## A monster's blow or bolt reaches the player: the damage comes off, a
+## flinch if the figure is only standing, and at nothing it falls and
+## comes back at the town gate a few seconds later.
+func _hurt_player(damage: int, by: String, from: Vector3) -> void:
+	if player.is_dead():
+		return
+	player.hp = maxi(player.hp - damage, 0)
+	popups.damage(player, damage)
+	_update_hp_bar()
+	if player.hp == 0:
+		_status = "The %s hits you for %d. You die." % [by, damage]
+		print("hurt: ", _status)
+		_hide_marker()
+		_rest_on_arrival = null
+		player.die(Player.DEATH_ANIM)
+		await get_tree().create_timer(RESPAWN_SECONDS).timeout
+		_respawn()
+		return
+	_status = "The %s hits you for %d." % [by, damage]
+	print("hurt: ", _status)
+	if not player.is_moving() and not player.is_resting() and not player.is_swinging() and not player.is_bumping():
+		player.face_point(from)
+		player.play_once(Player.HIT_ANIM)
+
+
+func _respawn() -> void:
+	var spawn := town.gate_cell
+	chunks.update_center(Vector3(spawn.x, 0, spawn.z))
+	chunks.load_all_pending()
+	player.place(_nearest_standable(spawn))
+	player.hp = Player.MAX_HP
+	player.revive()
+	rig.snap_to_target()
+	_update_hp_bar()
+	_status = "You wake at the town gate."
 
 
 ## The nearest feet cell to a column: on the ground, or on the floor
@@ -615,9 +695,9 @@ func _on_player_bumped(other: Figure) -> void:
 func _attack(target: Figure) -> void:
 	player.face_point(target.global_position)
 	var clip: String = Player.ATTACKS[randi() % Player.ATTACKS.size()]
-	var length := player.play_once(clip)
+	var length := player.play_once(clip, true)
 	await get_tree().create_timer(length * Player.ATTACK_LANDS).timeout
-	if not is_instance_valid(target) or target.is_dead():
+	if not is_instance_valid(target) or target.is_dead() or player.is_dead():
 		return
 	var damage := randi_range(1, 6) + randi_range(1, 6)
 	var result := monsters.hit(target, damage, player.global_position)
@@ -635,7 +715,7 @@ func _attack(target: Figure) -> void:
 ## Sits on the seat or lies on the bed covering feet cell `c`, which the
 ## figure stands beside. Returns whether there was one to use.
 func _try_rest(c: Vector3i) -> bool:
-	if player.is_resting() or player.is_moving():
+	if player.is_resting() or player.is_moving() or player.is_dead():
 		return false
 	var f := finder.furniture_at(c)
 	if f.is_empty():
@@ -867,6 +947,8 @@ func _physics_process(_delta: float) -> void:
 ## has several (a house with an upstairs); by default the player's own.
 func _walk_to(x: int, z: int, y: float = NAN) -> void:
 	_rest_on_arrival = null
+	if player.is_dead():
+		return
 	if is_nan(y):
 		y = finder.feet_height(player.cell)
 	var target: Variant = finder.stand_cell_near(x, z, y)
@@ -942,9 +1024,21 @@ func _report_monsters(shot: String) -> void:
 			rig.snap(yaw, float(a.trim_prefix("--zoom=")))
 			rig.snap_to_target()
 	monsters.spawn_around(player.cell, Monsters.KINDS.size())
+	var mage: Figure = null
+	for f: Node in monsters.get_children():
+		if f is Figure and (f as Figure).model_file == "Skeleton_Mage.glb":
+			mage = f
 	for i in frames:
 		await get_tree().process_frame
+		# --chase: halfway through, go after the mage, which should back off.
+		if "--chase" in OS.get_cmdline_user_args() and is_instance_valid(mage) and i >= frames / 2:
+			if i % 30 == 0:
+				print("chase: mage %d cells off%s, player %d hp" % [
+					maxi(absi(mage.cell.x - player.cell.x), absi(mage.cell.z - player.cell.z)), " (dead)" if mage.is_dead() else "", player.hp])
+			if not player.is_moving() and not player.is_dead() and not player.is_swinging() and not mage.is_dead():
+				_walk_to(mage.cell.x, mage.cell.z, mage.position.y)
 	print(monsters.report())
+	print("player: %d hp%s at %s" % [player.hp, " (dead)" if player.is_dead() else "", player.cell])
 	if not shot.is_empty():
 		await RenderingServer.frame_post_draw
 		get_viewport().get_texture().get_image().save_png(shot)
